@@ -751,7 +751,7 @@ async def asterisk_outbound_call(body: Dict[str, Any], db: Client = Depends(get_
             )
     else:
         # Non-local mode (traditional VPS / Production mode with fallback logic)
-        if not dial_number.startswith('+') and not dial_number.startswith('91'):
+        if not dial_number.startswith('+'):
             dial_number = '+' + dial_number
         orig_cmd = f"channel originate PJSIP/{dial_number}@{endpoint_name} application AudioSocket {call_uuid},127.0.0.1:9092 \"{caller_id}\""
         
