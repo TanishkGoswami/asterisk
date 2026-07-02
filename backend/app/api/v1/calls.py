@@ -425,7 +425,7 @@ async def test_call(
                     vps_resp = await client.post(
                          f"{vps_api_url}/api/calls/asterisk/outbound",
                          json={
-                             "to_number": to_number,
+                             "to_number": dial_number,
                              "from_number": from_number or "",
                              "workspace_id": workspace_id,
                              "agent_id": agent_id,
