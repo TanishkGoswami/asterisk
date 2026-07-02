@@ -377,6 +377,10 @@ async def test_call(
             if dial_number.startswith('+'):
                 if dial_number.startswith('+91'):
                     dial_number = dial_number[1:]
+                    
+        # Ensure dial_number has '+' prefix
+        if not dial_number.startswith('+'):
+            dial_number = '+' + dial_number
                 
         endpoint_name = f"provider-{trunk_id}"
         caller_id = from_number or "+18166536732"
@@ -721,6 +725,10 @@ async def asterisk_outbound_call(body: Dict[str, Any], db: Client = Depends(get_
         if dial_number.startswith('+'):
             if dial_number.startswith('+91'):
                 dial_number = dial_number[1:]
+                
+    # Ensure dial_number has '+' prefix
+    if not dial_number.startswith('+'):
+        dial_number = '+' + dial_number
             
     endpoint_name = f"provider-{trunk_id}"
     caller_id = from_number or "+18166536732"
