@@ -411,7 +411,7 @@ async def test_call(
         # Non-local mode: try VPS HTTP API → SSH → manual fallback
         import httpx
         # Ensure dial_number has '+' if non-local mode expects it
-        if not dial_number.startswith('+') and not dial_number.startswith('91'):
+        if not dial_number.startswith('+'):
             dial_number = '+' + dial_number
         originate_cmd_str = f"asterisk -rx 'channel originate PJSIP/{dial_number}@{endpoint_name} application AudioSocket {call_id},127.0.0.1:9092 \"{caller_id}\"'"
         
