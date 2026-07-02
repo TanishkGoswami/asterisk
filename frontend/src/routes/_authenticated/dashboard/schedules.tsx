@@ -96,7 +96,7 @@ function SchedulesPage() {
         const agentsData = await agentsRes.json();
         setAgents(agentsData);
 
-        await fetchSchedules(contextWsId, contextHeaders!);
+        await fetchSchedules(contextWsId!, contextHeaders!);
       } catch (err) {
         console.error("Initialization failed:", err);
       } finally {

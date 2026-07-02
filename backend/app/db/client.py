@@ -5,9 +5,10 @@ from app.core.config import settings
 @lru_cache(maxsize=1)
 def get_supabase_client() -> Client:
     """Singleton Supabase client — uses service role key to bypass RLS on backend"""
+    key = settings.supabase_service_role_key or settings.supabase_jwt_secret
     return create_client(
         settings.supabase_url,
-        settings.supabase_jwt_secret  # service role key, bypasses RLS
+        key
     )
 
 def get_db() -> Client:

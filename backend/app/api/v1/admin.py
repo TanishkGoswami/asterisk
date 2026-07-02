@@ -33,18 +33,53 @@ async def verify_super_admin(
     has the 'super_admin' role in the database.
     """
     token = credentials.credentials
+    payload = None
+
+    # Tier 1: Try verifying using JWKS (for ES256/asymmetric algorithms)
     try:
-        # Decode using the Supabase JWT secret
+        from jwt import PyJWKClient
+        jwks_url = f"{settings.supabase_url.rstrip('/')}/auth/v1/.well-known/jwks.json"
+        headers = {
+            "apikey": settings.supabase_anon_key,
+            "Authorization": f"Bearer {settings.supabase_anon_key}"
+        }
+        jwks_client = PyJWKClient(jwks_url, headers=headers)
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
         payload = jwt.decode(
             token,
-            settings.supabase_jwt_secret,
-            algorithms=["HS256"],
+            signing_key.key,
+            algorithms=["HS256", "RS256", "ES256"],
             options={"verify_aud": False}
         )
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token has expired")
-    except jwt.InvalidTokenError as e:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+    except Exception as jwks_err:
+        logger.warning(f"[verify_super_admin] JWKS verification failed or skipped: {jwks_err}. Falling back to symmetric secret...")
+
+    # Tier 2: Fallback to symmetric HS256 secret (supabase_jwt_secret)
+    if not payload:
+        try:
+            import base64
+            try:
+                secret = base64.b64decode(settings.supabase_jwt_secret)
+            except Exception:
+                secret = settings.supabase_jwt_secret
+
+            payload = jwt.decode(
+                token,
+                secret,
+                algorithms=["HS256"],
+                options={"verify_aud": False}
+            )
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token has expired")
+        except jwt.InvalidTokenError as e:
+            try:
+                unverified_header = jwt.get_unverified_header(token)
+                unverified_payload = jwt.decode(token, options={"verify_signature": False})
+                logger.error(f"[verify_super_admin] Verification failed. Token header: {unverified_header}, Payload: {unverified_payload}")
+            except Exception as inspect_err:
+                logger.error(f"[verify_super_admin] Failed to parse unverified token: {inspect_err}")
+            logger.error(f"[verify_super_admin] Invalid token verification failed: {e}")
+            raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
 
     user_id = payload.get("sub")
     if not user_id:
@@ -400,8 +435,10 @@ async def create_sip_trunk(
         res = db.table("sip_trunk_providers").insert(payload).execute()
         new_trunk_id = res.data[0]["id"]
         
-        # Trigger Asterisk config regeneration
-        AsteriskConfigGenerator.generate_configs(db)
+        # Trigger Asterisk config regeneration in the background
+        from app.api.v1.sip_trunks import deploy_asterisk_configs
+        import asyncio
+        asyncio.create_task(asyncio.to_thread(deploy_asterisk_configs, db))
         
         # Audit log
         payload["password_encrypted"] = "********" if pw_encrypted else None
@@ -410,6 +447,29 @@ async def create_sip_trunk(
         )
         return {"status": "success", "trunk_id": new_trunk_id}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/sip-trunks/{trunk_id}/generate-config")
+async def admin_generate_sip_trunk_config(
+    trunk_id: str,
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Generate Asterisk PJSIP and Dialplan configuration blocks for a specific SIP trunk."""
+    try:
+        res = db.table("sip_trunk_providers").select("*").eq("id", trunk_id).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="SIP Trunk not found")
+        
+        trunk = res.data[0]
+        if trunk.get("password_encrypted"):
+            trunk["password_decrypted"] = decrypt_password(trunk["password_encrypted"])
+        
+        configs = AsteriskConfigGenerator.generate_config(trunk, mask_password=False)
+        return configs
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/sip-trunks/{trunk_id}")
@@ -443,8 +503,10 @@ async def update_sip_trunk(
 
         db.table("sip_trunk_providers").update(payload).eq("id", trunk_id).execute()
         
-        # Trigger Asterisk config regeneration
-        AsteriskConfigGenerator.generate_configs(db)
+        # Trigger Asterisk config regeneration in the background
+        from app.api.v1.sip_trunks import deploy_asterisk_configs
+        import asyncio
+        asyncio.create_task(asyncio.to_thread(deploy_asterisk_configs, db))
         
         if "password_encrypted" in payload:
             payload["password_encrypted"] = "********"
@@ -466,8 +528,10 @@ async def delete_sip_trunk(
     try:
         db.table("sip_trunk_providers").delete().eq("id", trunk_id).execute()
         
-        # Trigger Asterisk config regeneration
-        AsteriskConfigGenerator.generate_configs(db)
+        # Trigger Asterisk config regeneration in the background
+        from app.api.v1.sip_trunks import deploy_asterisk_configs
+        import asyncio
+        asyncio.create_task(asyncio.to_thread(deploy_asterisk_configs, db))
         
         await audit_log_admin_action(
             db, admin["user_id"], "delete_sip_trunk", "sip_trunk", trunk_id, {}, request

@@ -11,6 +11,7 @@ node_modules/
 /frontend/node_modules/
 /backend/venv/
 /backend/.venv/
+/backend/venv-wsl/
 dist/
 dist-ssr/
 .output/

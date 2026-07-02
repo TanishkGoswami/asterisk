@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     supabase_url: str
     supabase_anon_key: str
     supabase_jwt_secret: str
+    supabase_service_role_key: Optional[str] = None
     voice_pilot_sso_secret: Optional[str] = None
     sip_encryption_key: Optional[str] = None
 
@@ -46,6 +47,14 @@ class Settings(BaseSettings):
     asterisk_webhook_secret: Optional[str] = None
     asterisk_provider_name: str = "airtel_or_jio"
     asterisk_default_sample_rate: int = 8000
+    asterisk_vps_url: Optional[str] = None          # e.g. http://72.60.202.148:8010
+    asterisk_ssh_host: str = "72.60.202.148"
+    asterisk_ssh_user: str = "root"
+    asterisk_ssh_key_path: Optional[str] = None     # path to SSH private key if needed
+    asterisk_mode: str = "local"
+    use_ssh_for_asterisk: bool = False
+    asterisk_cli_command: str = "asterisk"
+    asterisk_test_beep_on_connect: bool = False  # Send 440Hz beep on connect to verify AudioSocket framing
     
     # Redis
     redis_url: str = "redis://localhost:6379/0"

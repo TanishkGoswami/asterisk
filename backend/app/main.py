@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 import logging
 
 from app.core.config import settings
+from app.core.logging_config import setup_logging
 from app.api.v1 import (
     agents,
     auth,
@@ -17,11 +18,11 @@ from app.api.v1 import (
     voice_ws,
     sip_trunks,
     admin,
+    diagnostics as diagnostics_module,
 )
 
-
 # Setup logging
-logging.basicConfig(level=getattr(logging, settings.log_level))
+setup_logging(log_level=settings.log_level, log_file="logs/app.log")
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
@@ -80,6 +81,7 @@ app.include_router(voice_ws.router, tags=["voice-ws"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth-legacy"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+app.include_router(diagnostics_module.router)
 
 
 
@@ -124,7 +126,10 @@ async def health_asterisk():
 async def startup_event():
     """Run background tasks on startup"""
     import asyncio
+    from datetime import datetime, timezone
     from app.tasks.scheduler import start_local_scheduler
+    from app.api.v1.diagnostics import diagnostics
+    diagnostics.audiosocket_start_time = datetime.now(timezone.utc)
 
     # Start the local scheduler loop in the background
     asyncio.create_task(start_local_scheduler())

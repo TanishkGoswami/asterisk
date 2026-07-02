@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { AudioLines, Plus, Edit2, Trash2, CheckCircle, AlertTriangle, RefreshCw, Eye, EyeOff } from "lucide-react";
+import { AudioLines, Plus, Edit2, Trash2, CheckCircle, AlertTriangle, RefreshCw, Eye, EyeOff, Copy, Check } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -51,6 +51,12 @@ function SIPTrunkManager() {
   // Registration output
   const [regOutput, setRegOutput] = useState("");
   const [loadingReg, setLoadingReg] = useState(false);
+
+  // Selected Trunk Config states
+  const [selectedTrunkId, setSelectedTrunkId] = useState<string | null>(null);
+  const [generatedConfig, setGeneratedConfig] = useState<{ pjsip_conf: string; extensions_conf: string } | null>(null);
+  const [loadingConfig, setLoadingConfig] = useState(false);
+  const [copiedField, setCopiedField] = useState<'pjsip' | 'ext' | null>(null);
 
   // Form states
   const [editId, setEditId] = useState<string | null>(null);
@@ -123,6 +129,41 @@ function SIPTrunkManager() {
     } finally {
       setLoadingReg(false);
     }
+  };
+
+  const fetchConfig = async (trunkId: string) => {
+    setLoadingConfig(true);
+    setSelectedTrunkId(trunkId);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const headers = { Authorization: `Bearer ${session.access_token}` };
+      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+      const res = await fetch(`${apiUrl}/api/admin/sip-trunks/${trunkId}/generate-config`, {
+        method: "POST",
+        headers
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGeneratedConfig(data);
+      } else {
+        setGeneratedConfig(null);
+      }
+    } catch (e) {
+      toast.error("Failed to generate configuration.");
+      setGeneratedConfig(null);
+    } finally {
+      setLoadingConfig(false);
+    }
+  };
+
+  const handleCopy = (text: string, type: 'pjsip' | 'ext') => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(type);
+    setTimeout(() => setCopiedField(null), 2000);
+    toast.success("Configuration copied to clipboard");
   };
 
   useEffect(() => {
@@ -364,6 +405,17 @@ function SIPTrunkManager() {
                           </td>
                           <td className="py-3 text-right space-x-2">
                             <button
+                              onClick={() => fetchConfig(t.id)}
+                              title="View Asterisk Config"
+                              className={`inline-flex h-8 w-8 items-center justify-center rounded-[8px] border transition-all ${
+                                selectedTrunkId === t.id
+                                  ? "border-black bg-black text-white"
+                                  : "border-[#e6e6e6] hover:bg-[#f7f7f5] text-black/60"
+                              }`}
+                            >
+                              <AudioLines className="h-3.5 w-3.5" />
+                            </button>
+                            <button
                               onClick={() => openEditForm(t)}
                               className="inline-flex h-8 w-8 items-center justify-center rounded-[8px] border border-[#e6e6e6] hover:bg-[#f7f7f5]"
                             >
@@ -381,6 +433,62 @@ function SIPTrunkManager() {
                     </tbody>
                   </table>
                 </div>
+              </div>
+            )}
+
+            {/* Asterisk Configurations Panel */}
+            {selectedTrunkId && (
+              <div className="rounded-[20px] border border-[#e6e6e6] bg-white p-6 shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-black/5 pb-3">
+                  <h3 className="font-medium text-base text-black">
+                    Asterisk Configuration: {trunks.find(t => t.id === selectedTrunkId)?.name}
+                  </h3>
+                  <button
+                    onClick={() => { setSelectedTrunkId(null); setGeneratedConfig(null); }}
+                    className="text-xs text-neutral-400 hover:text-black font-mono"
+                  >
+                    Close
+                  </button>
+                </div>
+
+                {loadingConfig ? (
+                  <div className="h-32 flex flex-col items-center justify-center space-y-2">
+                    <RefreshCw className="h-5 w-5 animate-spin text-black/40" />
+                    <p className="text-[10px] font-mono uppercase tracking-wider text-black/40">Generating configurations...</p>
+                  </div>
+                ) : generatedConfig ? (
+                  <div className="space-y-4">
+                    {/* PJSIP config */}
+                    <div className="rounded-xl bg-black p-4 text-white font-mono text-xs overflow-x-auto relative">
+                      <div className="flex justify-between items-center mb-2 text-neutral-400 border-b border-white/10 pb-1">
+                        <span>pjsip.conf configuration block</span>
+                        <button
+                          onClick={() => handleCopy(generatedConfig.pjsip_conf, 'pjsip')}
+                          className="h-6 w-6 inline-flex items-center justify-center text-white hover:bg-white/10 rounded"
+                        >
+                          {copiedField === 'pjsip' ? <Check className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
+                        </button>
+                      </div>
+                      <pre className="text-left whitespace-pre-wrap">{generatedConfig.pjsip_conf}</pre>
+                    </div>
+
+                    {/* Extensions config */}
+                    <div className="rounded-xl bg-black p-4 text-white font-mono text-xs overflow-x-auto relative">
+                      <div className="flex justify-between items-center mb-2 text-neutral-400 border-b border-white/10 pb-1">
+                        <span>extensions.conf dialplan block</span>
+                        <button
+                          onClick={() => handleCopy(generatedConfig.extensions_conf, 'ext')}
+                          className="h-6 w-6 inline-flex items-center justify-center text-white hover:bg-white/10 rounded"
+                        >
+                          {copiedField === 'ext' ? <Check className="h-3 w-3 text-green-400" /> : <Copy className="h-3 w-3" />}
+                        </button>
+                      </div>
+                      <pre className="text-left whitespace-pre-wrap">{generatedConfig.extensions_conf}</pre>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-neutral-400 font-mono">Could not generate Asterisk configuration for this trunk.</p>
+                )}
               </div>
             )}
           </div>

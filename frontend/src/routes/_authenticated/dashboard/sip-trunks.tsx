@@ -126,7 +126,7 @@ export function SIPTrunksPage() {
           setAgents(await agentRes.json())
         }
         
-        await fetchTrunks(contextWsId, contextHeaders!)
+        await fetchTrunks(contextWsId!, contextHeaders!)
       } catch (err) {
         console.error("Failed to load page data:", err)
       } finally {

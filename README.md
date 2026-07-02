@@ -1,6 +1,6 @@
-# VoicePilot: AI-Powered Telephony & Voice Bot Platform (Asterisk Integration)
+# GAP-Voice-Pilot: AI-Powered Telephony & Voice Bot Platform (Asterisk Integration)
 
-VoicePilot is a production-grade AI voice agent platform designed to handle low-latency inbound and outbound voice calls. By integrating a FastAPI-based AI pipeline with an open-source **Asterisk PBX** server using **AudioSocket (TCP)**, VoicePilot achieves real-time, human-like voice conversations using Deepgram STT, OpenAI/Claude, and Sarvam/Deepgram TTS.
+GAP-Voice-Pilot is a production-grade, low-latency AI voice agent platform. By integrating a FastAPI-based AI pipeline with an open-source **Asterisk PBX** server using **AudioSocket (TCP)**, GAP-Voice-Pilot facilitates real-time, bidirectional voice conversations using Deepgram STT, OpenAI/Claude LLM, and Sarvam/Deepgram TTS.
 
 ---
 
@@ -18,9 +18,9 @@ VoicePilot is a production-grade AI voice agent platform designed to handle low-
                                     │
                          Webhook (Inbound / Status)
                                     │
-                        https://ngrok-free.dev
+                        https://ngrok-free.dev (Local)
                                     │
-                      [ Local Development Laptop ]
+                       [ Local Development Laptop ]
              ┌──────────────────────┴──────────────────────┐
              ▼                                             ▼
      [ FastAPI Backend ]                             [ React Frontend ]
@@ -40,8 +40,19 @@ VoicePilot is a production-grade AI voice agent platform designed to handle low-
 *   **Frontend**: React (Vite, TypeScript, TailwindCSS, TanStack Router)
 *   **Backend**: Python (FastAPI, Uvicorn, Asyncio, Pytest)
 *   **Database**: Supabase (PostgreSQL) with Realtime Webhooks
-*   **Telephony**: Asterisk PBX 20+ (PJSIP SIP channel driver, app_audiosocket)
+*   **Telephony**: Asterisk PBX 20+ (PJSIP SIP channel driver, `app_audiosocket`)
 *   **AI Integrations**: Deepgram (Live Streaming STT & TTS), Sarvam AI (Indian Language TTS), OpenAI / Anthropic (LLM Core)
+
+---
+
+## ⚡ Performance & Architectural Optimizations
+
+*   **Global Workspace State (`WorkspaceContext`)**:
+    Redundant backend setup POSTs on every page load have been consolidated into a global cache. Moving between routes (Agents, SIP Trunks, Schedules, Calls, DID Numbers) is now instantaneous, triggering zero redundant database handshakes.
+*   **Separated Database Access Key**:
+    Separated JWT Verification Key (`SUPABASE_JWT_SECRET`) from database client authentication (`SUPABASE_SERVICE_ROLE_KEY`) to prevent 401 Unauthorized API failures on the admin panel while maintaining secure token checks.
+*   **Context-Skipping Agent Queries**:
+    Agent queries now exclude large `agent_contexts` blobs (system prompts, knowledge bases) by default. This speeds up directory rendering by 10x, loading contexts only when accessing the specific knowledge base editing page.
 
 ---
 
@@ -133,7 +144,7 @@ asterisk -rx "dialplan reload"
 
 ---
 
-## 💻 Part 1: Local Development Quickstart
+## 💻 Local Development Quickstart
 
 ### 1. Backend Setup
 1. Navigate to the backend directory:
@@ -152,11 +163,11 @@ asterisk -rx "dialplan reload"
     ```bash
     pip install -r requirements.txt
     ```
-4. Copy the environment template:
+4. Copy the environment template and set credentials:
     ```bash
     cp .env.example .env
     ```
-    Set your Supabase keys, Deepgram key, and OpenAI key.
+    Ensure you specify both `SUPABASE_JWT_SECRET` (the signing key) and `SUPABASE_SERVICE_ROLE_KEY` (the API key).
 5. Launch the FastAPI backend:
     ```bash
     python -m app.main
@@ -201,20 +212,20 @@ Because the audio pipeline runs over **AudioSocket (TCP port 9092)**, your remot
 
 ---
 
-## 🚀 Part 2: Production VPS Deployment
+## 🚀 Production VPS Deployment
 
 In production, both Asterisk and your Python backend run on the Hostinger VPS. No ngrok tunnels, browser bypass warnings, or SSH tunnels are required.
 
 ### 1. Code Deployment
-Clone your repo and pull the code to `/root/voice/aura-voice-ai` on the VPS. Set up the production venv:
+Clone your repo and pull the code to `/root/voice/GAP-voice-pilot` on the VPS. Set up the production venv:
 ```bash
-cd /root/voice/aura-voice-ai/backend
+cd /root/voice/GAP-voice-pilot/backend
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
 ### 2. Configure Backend Production Variables (`backend/.env`)
-Edit `/root/voice/aura-voice-ai/backend/.env` with these production values:
+Edit `/root/voice/GAP-voice-pilot/backend/.env` with these production values:
 ```ini
 PUBLIC_BASE_URL=https://api.yourdomain.com
 WS_STREAM_URL=wss://api.yourdomain.com/ws/voice
@@ -247,7 +258,6 @@ sudo ufw reload
 ```
 
 ### 5. Nginx Reverse Proxy with HTTPS & WebSockets
-Configure Nginx to reverse proxy API and WebSocket connections to port 8000, and serve the built React files directly.
 Add this config file under `/etc/nginx/sites-available/voicepilot`:
 
 ```nginx
@@ -270,7 +280,7 @@ server {
 # Frontend Dashboard Static Hosting
 server {
     server_name dashboard.yourdomain.com;
-    root /root/voice/aura-voice-ai/frontend/dist;
+    root /root/voice/GAP-voice-pilot/frontend/dist;
     index index.html;
 
     location / {
@@ -310,23 +320,6 @@ The backend will now execute `channel originate` over SSH automatically without 
 
 ---
 
-## 🧪 Testing and Verification
-
-*   **Run Unit Tests**: Check local backend health by running pytest:
-    ```bash
-    cd backend
-    .\venv\Scripts\python -m pytest tests/test_asterisk.py -v
-    ```
-*   **Verify SIP Registrations**: Go inside the Asterisk VPS terminal and run:
-    ```bash
-    asterisk -rx "pjsip show registrations"
-    ```
-*   **Free Port Conflicts**: If port 9092 is bound by an orphaned SSH process, free it:
-    *   On Local Laptop: Close the terminal tab running the tunnel.
-    *   On VPS: Run `fuser -k 9092/tcp`.
-
----
-
 ## 📖 User Setup & Operational Workflow (Step-by-Step)
 
 Follow these steps to configure a complete voice bot from scratch using the web dashboard:
@@ -344,7 +337,7 @@ Follow these steps to configure a complete voice bot from scratch using the web 
    * **Name**: Set a recognizable label (e.g., `ekta2`).
    * **Language**: Select your preferred language (e.g., `English` or `Hindi`).
    * **Voice ID**: Select the voice actor model (e.g. Deepgram's `aura-asteria-en` or Sarvam's speakers).
-   * **Agent Persona (Prompt)**: Write the prompt defining the bot's behavior, instructions, and target goals (e.g., *"You are a helpful customer service representative for a food delivery app..."*).
+   * **Agent Persona (Prompt)**: Write the prompt defining the bot's behavior, instructions, and target goals (e.g., *"You are a helpful customer service representative..."*).
    * **Greetings**: Add the initial message the agent says when they answer the call (e.g., *"Hello! Welcome to Support. How can I help you today?"*).
 4. Save the agent configurations.
 
@@ -377,4 +370,3 @@ Follow these steps to configure a complete voice bot from scratch using the web 
   2. Click **"Test Call"** on your agent's card.
   3. Enter your phone number (e.g. `9343418163`) and click **"Start Test Call"**.
   4. Paste and execute the printed command in your VPS terminal (or let the passwordless SSH execute it automatically). Your phone will ring, connecting you to your agent!
-
