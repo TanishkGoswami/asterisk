@@ -35,12 +35,20 @@ async def read_packet(reader: asyncio.StreamReader) -> tuple[int, bytes]:
     """
     Reads a framed AudioSocket packet.
     Format: 1-byte message type, 2-byte payload length (big-endian), payload bytes.
+    Raises ConnectionError on incomplete reads/disconnections.
     """
-    header = await reader.readexactly(3)
+    try:
+        header = await reader.readexactly(3)
+    except asyncio.IncompleteReadError as e:
+        raise ConnectionError(f"AudioSocket EOF before packet header: {e}")
+
     msg_type = header[0]
     payload_len = int.from_bytes(header[1:3], byteorder='big')
     if payload_len > 0:
-        payload = await reader.readexactly(payload_len)
+        try:
+            payload = await reader.readexactly(payload_len)
+        except asyncio.IncompleteReadError as e:
+            raise ConnectionError(f"AudioSocket EOF before payload: {e}")
     else:
         payload = b''
     return msg_type, payload
@@ -759,8 +767,8 @@ class AsteriskVoiceSession:
                             pass
                 else:
                     logger.warning(f'[AudioSocket] Unknown packet type {msg_type}')
-        except asyncio.IncompleteReadError:
-            logger.audiosocket_connection_closed("eof")
+        except (asyncio.IncompleteReadError, ConnectionError, BrokenPipeError, ConnectionResetError) as e:
+            logger.audiosocket_connection_closed(f"eof: {e}")
         except Exception as e:
             logger.audiosocket_connection_error(e, "read_loop")
             diagnostics.add_error("error", "audiosocket", f"Read loop error: {str(e)}")
@@ -868,9 +876,17 @@ class AsteriskAudioSocketServer:
                 await session.run()
             except asyncio.CancelledError:
                 logger.audiosocket_connection_closed("cancelled")
+            except (asyncio.IncompleteReadError, ConnectionError, BrokenPipeError, ConnectionResetError) as e:
+                logger.info(f"[AudioSocket] Client disconnected normally during session: {e}")
             except Exception as e:
                 logger.audiosocket_connection_error(e, "session_run")
                 diagnostics.add_error("error", "audiosocket", f"Session run error: {str(e)}")
+
+        except (asyncio.IncompleteReadError, ConnectionError, BrokenPipeError, ConnectionResetError) as e:
+            logger.info(f"[AudioSocket] Client disconnected normally during handshake: {e}")
+        except Exception as e:
+            logger.error(f"[AudioSocket] Unexpected error in handle_connection: {e}", exc_info=True)
+            diagnostics.add_error("error", "audiosocket", f"Unexpected connection error: {str(e)}")
         finally:
             if call_uuid:
                 self.active_connections.pop(call_uuid, None)

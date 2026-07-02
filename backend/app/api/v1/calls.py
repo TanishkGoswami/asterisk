@@ -4,6 +4,7 @@ from app.db.client import get_db, Client
 from app.core.config import settings
 from app.services.telephony_service import TelephonyService
 import logging
+import subprocess
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -364,9 +365,18 @@ async def test_call(
             
         # Format dial number
         dial_number = to_number.strip()
-        if dial_number.startswith('+'):
-            if dial_number.startswith('+91'):
-                dial_number = dial_number[1:]
+        
+        # Query trunk provider type to verify if it is Twilio
+        try:
+            trunk_res = db.table("sip_trunk_providers").select("provider_type").eq("id", trunk_id).execute()
+            provider_type = trunk_res.data[0]["provider_type"] if trunk_res.data else "custom"
+        except Exception:
+            provider_type = "custom"
+            
+        if provider_type != "twilio":
+            if dial_number.startswith('+'):
+                if dial_number.startswith('+91'):
+                    dial_number = dial_number[1:]
                 
         endpoint_name = f"provider-{trunk_id}"
         caller_id = from_number or "+18166536732"
@@ -699,9 +709,18 @@ async def asterisk_outbound_call(body: Dict[str, Any], db: Client = Depends(get_
 
     # Format dial number
     dial_number = to_number.strip()
-    if dial_number.startswith('+'):
-        if dial_number.startswith('+91'):
-            dial_number = dial_number[1:]
+    
+    # Query trunk provider type to verify if it is Twilio
+    try:
+        trunk_res = db.table("sip_trunk_providers").select("provider_type").eq("id", trunk_id).execute()
+        provider_type = trunk_res.data[0]["provider_type"] if trunk_res.data else "custom"
+    except Exception:
+        provider_type = "custom"
+        
+    if provider_type != "twilio":
+        if dial_number.startswith('+'):
+            if dial_number.startswith('+91'):
+                dial_number = dial_number[1:]
             
     endpoint_name = f"provider-{trunk_id}"
     caller_id = from_number or "+18166536732"
@@ -825,9 +844,21 @@ async def test_local_originate(payload: Dict[str, Any]):
     
     # Check format compatibility
     dial_number = dest
-    if dial_number.startswith('+'):
-        if dial_number.startswith('+91'):
-            dial_number = dial_number[1:]
+    provider_type = "custom"
+    if provider.startswith("provider-"):
+        t_id = provider.replace("provider-", "")
+        # Query db to get provider_type
+        try:
+            trunk_res = db.table("sip_trunk_providers").select("provider_type").eq("id", t_id).execute()
+            if trunk_res.data:
+                provider_type = trunk_res.data[0]["provider_type"]
+        except Exception:
+            pass
+
+    if provider_type != "twilio":
+        if dial_number.startswith('+'):
+            if dial_number.startswith('+91'):
+                dial_number = dial_number[1:]
             
     orig_cmd = f"channel originate PJSIP/{dial_number}@{provider} application AudioSocket {call_uuid},127.0.0.1:9092 \"{caller}\""
     
