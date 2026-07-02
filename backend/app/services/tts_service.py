@@ -148,6 +148,7 @@ class WarmTTSConnection:
 
     async def speak(self, text: str) -> AsyncGenerator[bytes, None]:
         """Send text and yield audio bytes until Flushed."""
+        audio_chunks = []
         async with self._lock:
             if self._ws is None or self._ws.state != websockets.State.OPEN:
                 await self.connect()
@@ -159,12 +160,12 @@ class WarmTTSConnection:
 
                 async for msg in ws:
                     if isinstance(msg, bytes) and msg:
-                        yield msg
+                        audio_chunks.append(msg)
                     elif isinstance(msg, str):
                         try:
                             data = json.loads(msg)
                             if data.get("type") == "Flushed":
-                                return
+                                break
                         except Exception:
                             pass
             except Exception as exc:
@@ -172,6 +173,9 @@ class WarmTTSConnection:
                 self._ws = None
                 self._connect_task = None
                 raise
+
+        for chunk in audio_chunks:
+            yield chunk
 
     async def cancel(self) -> None:
         """Stop current synthesis (barge-in)."""

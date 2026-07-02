@@ -316,6 +316,7 @@ class WarmSarvamConnection:
     async def speak(self, text: str) -> AsyncGenerator[bytes, None]:
         """Send text and yield audio bytes until flushed."""
         text = prepare_for_tts(text)
+        audio_chunks = []
         async with self._lock:
             if self._ws is None or self._ws.state != websockets.State.OPEN:
                 await self.connect()
@@ -337,20 +338,20 @@ class WarmSarvamConnection:
                 }
                 await ws.send(json.dumps(flush_msg))
 
-                # Receive and yield audio chunks
+                # Receive all audio chunks
                 async for raw_msg in ws:
                     msg = json.loads(raw_msg)
                     msg_type = msg.get("type")
                     if msg_type == "audio":
                         audio_b64 = msg.get("data", {}).get("audio", "")
                         if audio_b64:
-                            yield base64.b64decode(audio_b64)
+                            audio_chunks.append(base64.b64decode(audio_b64))
                     elif msg_type == "flushed":
-                        return
+                        break
                     elif msg_type == "event":
                         event_type = msg.get("data", {}).get("event_type")
                         if event_type == "final":
-                            return
+                            break
                     elif msg_type == "error":
                         error_msg = msg.get("data", {}).get("message", "Unknown Sarvam WS error")
                         raise RuntimeError(f"Sarvam WS error: {error_msg}")
@@ -364,6 +365,9 @@ class WarmSarvamConnection:
                 self._ws = None
                 self._connect_task = None
                 raise
+
+        for chunk in audio_chunks:
+            yield chunk
 
     async def close(self) -> None:
         if self._ws and self._ws.state == websockets.State.OPEN:

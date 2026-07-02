@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     asterisk_ssh_host: str = "72.60.202.148"
     asterisk_ssh_user: str = "root"
     asterisk_ssh_key_path: Optional[str] = None     # path to SSH private key if needed
+    asterisk_mode: str = "local"
+    use_ssh_for_asterisk: bool = False
+    asterisk_cli_command: str = "asterisk"
+    asterisk_test_beep_on_connect: bool = False  # Send 440Hz beep on connect to verify AudioSocket framing
     
     # Redis
     redis_url: str = "redis://localhost:6379/0"

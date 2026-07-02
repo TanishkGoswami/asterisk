@@ -145,7 +145,6 @@ class CallSessionManager:
                     "status": "completed",
                     "ended_at": context["ended_at"],
                     "duration_seconds": duration,
-                    "end_reason": reason,
                     "actual_duration": duration
                 }).eq("call_uuid", call_uuid).execute()
             except Exception as e:

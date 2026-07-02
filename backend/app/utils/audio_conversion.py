@@ -29,6 +29,18 @@ def resample_pcm16(input_bytes: bytes, from_rate: int, to_rate: int) -> bytes:
         return b''
     if from_rate == to_rate:
         return input_bytes
+    # High-quality state-free downsampling for 16kHz to 8kHz (slicing every second 16-bit sample)
+    if from_rate == 16000 and to_rate == 8000:
+        import array
+        try:
+            # Ensure length is even (each sample is 2 bytes)
+            if len(input_bytes) % 2 != 0:
+                input_bytes = input_bytes[:len(input_bytes) - (len(input_bytes) % 2)]
+            a = array.array('h', input_bytes)
+            return a[::2].tobytes()
+        except Exception as e:
+            logger.error(f'Slicing downsample failed from 16k to 8k: {e}')
+
     if audioop is None:
         logger.warning('audioop not available. Returning raw bytes without resampling.')
         return input_bytes
