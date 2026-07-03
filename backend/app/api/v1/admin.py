@@ -743,6 +743,81 @@ async def update_agent(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/voice-models")
+async def get_voice_models(
+    provider: Optional[str] = Query(None, description="Filter by voice provider (elevenlabs, deepgram, sarvam)"),
+    admin: dict = Depends(verify_super_admin)
+):
+    """Get available voice models for each provider."""
+    try:
+        # Define available voice models for each provider
+        voice_models = {
+            "elevenlabs": [
+                {"id": "eleven_turbo_v2", "name": "Eleven Turbo v2", "language": "en-US"},
+                {"id": "eleven_multilingual_v2", "name": "Eleven Multilingual v2", "language": "multi"},
+                {"id": "playht_2.0", "name": "PlayHT 2.0", "language": "en-US"},
+                {"id": "openai_tts", "name": "OpenAI TTS", "language": "en-US"}
+            ],
+            "deepgram": [
+                {"id": "aura-asteria-en", "name": "Aura Asteria (English)", "language": "en-US"},
+                {"id": "aura-luna-en", "name": "Aura Luna (English)", "language": "en-US"},
+                {"id": "aura-stella-en", "name": "Aura Stella (English)", "language": "en-US"},
+                {"id": "aura-athena-en", "name": "Aura Athena (English)", "language": "en-US"}
+            ],
+            "sarvam": [
+                {"id": "aayan", "name": "Aayan (Hindi Male)", "language": "hi-IN"},
+                {"id": "aditya", "name": "Aditya (Hindi Male)", "language": "hi-IN"},
+                {"id": "advait", "name": "Advait (Hindi Male)", "language": "hi-IN"},
+                {"id": "amit", "name": "Amit (Hindi Male)", "language": "hi-IN"},
+                {"id": "anand", "name": "Anand (Hindi Male)", "language": "hi-IN"},
+                {"id": "ashutosh", "name": "Ashutosh (Hindi Male)", "language": "hi-IN"},
+                {"id": "dev", "name": "Dev (Hindi Male)", "language": "hi-IN"},
+                {"id": "gokul", "name": "Gokul (Hindi Male)", "language": "hi-IN"},
+                {"id": "ishita", "name": "Ishita (Hindi Female)", "language": "hi-IN"},
+                {"id": "kabir", "name": "Kabir (Hindi Male)", "language": "hi-IN"},
+                {"id": "kavitha", "name": "Kavitha (Hindi Female)", "language": "hi-IN"},
+                {"id": "kavya", "name": "Kavya (Hindi Female)", "language": "hi-IN"},
+                {"id": "manan", "name": "Manan (Hindi Male)", "language": "hi-IN"},
+                {"id": "mani", "name": "Mani (Hindi Male)", "language": "hi-IN"},
+                {"id": "mohit", "name": "Mohit (Hindi Male)", "language": "hi-IN"},
+                {"id": "neha", "name": "Neha (Hindi Female)", "language": "hi-IN"},
+                {"id": "pooja", "name": "Pooja (Hindi Female)", "language": "hi-IN"},
+                {"id": "priya", "name": "Priya (Hindi Female)", "language": "hi-IN"},
+                {"id": "rahul", "name": "Rahul (Hindi Male)", "language": "hi-IN"},
+                {"id": "ratan", "name": "Ratan (Hindi Male)", "language": "hi-IN"},
+                {"id": "rehan", "name": "Rehan (Hindi Male)", "language": "hi-IN"},
+                {"id": "ritu", "name": "Ritu (Hindi Female)", "language": "hi-IN"},
+                {"id": "rohan", "name": "Rohan (Hindi Male)", "language": "hi-IN"},
+                {"id": "roopa", "name": "Roopa (Hindi Female)", "language": "hi-IN"},
+                {"id": "rupali", "name": "Rupali (Hindi Female)", "language": "hi-IN"},
+                {"id": "shreya", "name": "Shreya (Hindi Female)", "language": "hi-IN"},
+                {"id": "shruti", "name": "Shruti (Hindi Female)", "language": "hi-IN"},
+                {"id": "shubh", "name": "Shubh (Hindi Male)", "language": "hi-IN"},
+                {"id": "simran", "name": "Simran (Hindi Female)", "language": "hi-IN"},
+                {"id": "soham", "name": "Soham (Hindi Male)", "language": "hi-IN"},
+                {"id": "suhani", "name": "Suhani (Hindi Female)", "language": "hi-IN"},
+                {"id": "sumit", "name": "Sumit (Hindi Male)", "language": "hi-IN"},
+                {"id": "sunny", "name": "Sunny (Hindi Male)", "language": "hi-IN"},
+                {"id": "tanya", "name": "Tanya (Hindi Female)", "language": "hi-IN"},
+                {"id": "tarun", "name": "Tarun (Hindi Male)", "language": "hi-IN"},
+                {"id": "varun", "name": "Varun (Hindi Male)", "language": "hi-IN"},
+                {"id": "vijay", "name": "Vijay (Hindi Male)", "language": "hi-IN"}
+            ]
+        }
+        
+        # If provider is specified, return only that provider's models
+        if provider:
+            if provider not in voice_models:
+                raise HTTPException(status_code=400, detail=f"Invalid provider: {provider}")
+            return {"provider": provider, "models": voice_models[provider]}
+        
+        # Return all providers and their models
+        return voice_models
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ==========================================
 # Endpoints: Call Logs & CSV Export
