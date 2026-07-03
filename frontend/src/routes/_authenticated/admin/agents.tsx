@@ -27,6 +27,12 @@ interface PhoneShort {
   agent_id: string | null;
 }
 
+interface VoiceModel {
+  id: string;
+  name: string;
+  language: string;
+}
+
 function AgentManager() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [phones, setPhones] = useState<PhoneShort[]>([]);
@@ -44,6 +50,8 @@ function AgentManager() {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [fallbackMessage, setFallbackMessage] = useState("");
   const [status, setStatus] = useState<"active" | "inactive" | "training">("active");
+  const [availableVoiceModels, setAvailableVoiceModels] = useState<VoiceModel[]>([]);
+  const [loadingVoiceModels, setLoadingVoiceModels] = useState(false);
 
   // Test call states
   const [targetNumber, setTargetNumber] = useState("");
@@ -81,6 +89,34 @@ function AgentManager() {
     fetchData();
   }, []);
 
+  // Fetch voice models when voice provider changes
+  useEffect(() => {
+    const fetchVoiceModels = async () => {
+      if (!voiceProvider) return;
+      
+      setLoadingVoiceModels(true);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+
+        const headers = { Authorization: `Bearer ${session.access_token}` };
+        const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+        const res = await fetch(`${apiUrl}/api/admin/voice-models?provider=${voiceProvider}`, { headers });
+        if (!res.ok) throw new Error("Failed to load voice models.");
+        const data = await res.json();
+        setAvailableVoiceModels(data.models || []);
+      } catch (e: any) {
+        console.error("Failed to load voice models:", e);
+        toast.error(e.message || "Failed to load voice models.");
+      } finally {
+        setLoadingVoiceModels(false);
+      }
+    };
+
+    fetchVoiceModels();
+  }, [voiceProvider]);
+
   const openEdit = (agent: Agent) => {
     setSelectedAgent(agent);
     setName(agent.name);
@@ -91,6 +127,12 @@ function AgentManager() {
     setFallbackMessage(agent.fallback_message || "");
     setStatus(agent.status);
     setActiveTab("form");
+  };
+
+  const handleVoiceProviderChange = (newProvider: string) => {
+    setVoiceProvider(newProvider);
+    // Reset voice ID when provider changes
+    setVoiceId("");
   };
 
   const openTestCall = (agent: Agent) => {
@@ -310,20 +352,41 @@ function AgentManager() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1">
                 <label className="text-[11px] font-mono uppercase tracking-wider text-black/50">Voice Model ID</label>
-                <input
-                  type="text"
-                  required
-                  value={voiceId}
-                  onChange={(e) => setVoiceId(e.target.value)}
-                  className="w-full rounded-[10px] border border-[#e6e6e6] px-3 py-2 text-[13px] text-black focus:outline-none"
-                />
+                {loadingVoiceModels ? (
+                  <div className="w-full rounded-[10px] border border-[#e6e6e6] px-3 py-2 text-[13px] text-black/40">
+                    Loading voice models...
+                  </div>
+                ) : availableVoiceModels.length > 0 ? (
+                  <select
+                    required
+                    value={voiceId}
+                    onChange={(e) => setVoiceId(e.target.value)}
+                    className="w-full rounded-[10px] border border-[#e6e6e6] bg-white px-3 py-2 text-[13px] text-black focus:outline-none"
+                  >
+                    <option value="">Select a voice model</option>
+                    {availableVoiceModels.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.name} ({model.language})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    required
+                    value={voiceId}
+                    onChange={(e) => setVoiceId(e.target.value)}
+                    placeholder="Enter voice model ID manually"
+                    className="w-full rounded-[10px] border border-[#e6e6e6] px-3 py-2 text-[13px] text-black focus:outline-none"
+                  />
+                )}
               </div>
 
               <div className="space-y-1">
                 <label className="text-[11px] font-mono uppercase tracking-wider text-black/50">Voice Provider</label>
                 <select
                   value={voiceProvider}
-                  onChange={(e) => setVoiceProvider(e.target.value)}
+                  onChange={(e) => handleVoiceProviderChange(e.target.value)}
                   className="w-full rounded-[10px] border border-[#e6e6e6] bg-white px-3 py-2 text-[13px] text-black focus:outline-none"
                 >
                   <option value="elevenlabs">ElevenLabs</option>
