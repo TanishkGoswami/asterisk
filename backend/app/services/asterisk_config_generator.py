@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -109,6 +109,7 @@ class AsteriskConfigGenerator:
  
         pjsip_conf = "\n".join(pjsip_lines)
  
+        base_api_url = settings.public_base_url or 'http://127.0.0.1:8000'
         # 2. Extensions config generation
         ext_lines = [
             f"; === Inbound Routing for Provider: {name} (ID: {trunk_id}) ===",
@@ -117,12 +118,10 @@ class AsteriskConfigGenerator:
             "; 1. Match numeric extensions",
             "exten => _X.,1,NoOp(Incoming SIP call from ${CALLERID(num)} to ${EXTEN})",
             " same => n,Set(CALL_UUID=${UUID()})",
-            " same => n,Set(RETRIES=0)",
-            f" same => n(try_curl_num),System(curl -s -m 2 \"{settings.public_base_url or 'http://127.0.0.1:8010'}/api/webhooks/asterisk/inbound?caller_id=${{CALLERID(num)}}&dialed_number=${{EXTEN}}&call_uuid=${{CALL_UUID}}&provider=asterisk&secret={webhook_secret}\")",
-            " same => n,GotoIf($[\"${SYSTEMSTATUS}\" = \"SUCCESS\"]?curl_ok_num)",
-            " same => n,Set(RETRIES=$[${RETRIES} + 1])",
-            " same => n,GotoIf($[${RETRIES} < 3]?try_curl_num)",
-            " same => n,System(echo \"[${STRFTIME(${EPOCH},,%Y-%m-%d %H:%M:%S)}] Webhook failed for CALL_UUID ${CALL_UUID} caller ${CALLERID(num)} dialed ${EXTEN}\" >> /var/log/asterisk/webhook_fail.log)",
+            f" same => n,Set(CALL_PERMISSION=${{CURL({base_api_url}/api/webhooks/asterisk/inbound?caller_id=${{CALLERID(num)}}\&dialed_number=${{EXTEN}}\&call_uuid=${{CALL_UUID}}\&provider=asterisk\&secret={webhook_secret})}})",
+            " same => n,GotoIf($[\"${CALL_PERMISSION:0:5}\"=\"ALLOW\"]?curl_ok_num:reject_num)",
+            " same => n(reject_num),NoOp(Call rejected: ${CALL_PERMISSION})",
+            " same => n,Hangup(21)",
             " same => n(curl_ok_num),Answer()",
             " same => n,AudioSocket(${CALL_UUID},127.0.0.1:9092)",
             " same => n,Hangup()",
@@ -130,12 +129,10 @@ class AsteriskConfigGenerator:
             "; 2. Match numeric extensions with leading +",
             "exten => _+X.,1,NoOp(Incoming SIP call from ${CALLERID(num)} to ${EXTEN})",
             " same => n,Set(CALL_UUID=${UUID()})",
-            " same => n,Set(RETRIES=0)",
-            f" same => n(try_curl_plus),System(curl -s -m 2 \"{settings.public_base_url or 'http://127.0.0.1:8010'}/api/webhooks/asterisk/inbound?caller_id=${{CALLERID(num)}}&dialed_number=${{EXTEN}}&call_uuid=${{CALL_UUID}}&provider=asterisk&secret={webhook_secret}\")",
-            " same => n,GotoIf($[\"${SYSTEMSTATUS}\" = \"SUCCESS\"]?curl_ok_plus)",
-            " same => n,Set(RETRIES=$[${RETRIES} + 1])",
-            " same => n,GotoIf($[${RETRIES} < 3]?try_curl_plus)",
-            " same => n,System(echo \"[${STRFTIME(${EPOCH},,%Y-%m-%d %H:%M:%S)}] Webhook failed for CALL_UUID ${CALL_UUID} caller ${CALLERID(num)} dialed ${EXTEN}\" >> /var/log/asterisk/webhook_fail.log)",
+            f" same => n,Set(CALL_PERMISSION=${{CURL({base_api_url}/api/webhooks/asterisk/inbound?caller_id=${{CALLERID(num)}}\&dialed_number=${{EXTEN}}\&call_uuid=${{CALL_UUID}}\&provider=asterisk\&secret={webhook_secret})}})",
+            " same => n,GotoIf($[\"${CALL_PERMISSION:0:5}\"=\"ALLOW\"]?curl_ok_plus:reject_plus)",
+            " same => n(reject_plus),NoOp(Call rejected: ${CALL_PERMISSION})",
+            " same => n,Hangup(21)",
             " same => n(curl_ok_plus),Answer()",
             " same => n,AudioSocket(${CALL_UUID},127.0.0.1:9092)",
             " same => n,Hangup()",
@@ -143,16 +140,13 @@ class AsteriskConfigGenerator:
             "; 3. Match s extension (default routing)",
             "exten => s,1,NoOp(Incoming SIP call to s from ${CALLERID(num)})",
             " same => n,Set(CALL_UUID=${UUID()})",
-            " same => n,Set(RETRIES=0)",
-            f" same => n(try_curl_s),System(curl -s -m 2 \"{settings.public_base_url or 'http://127.0.0.1:8010'}/api/webhooks/asterisk/inbound?caller_id=${{CALLERID(num)}}&dialed_number=${{EXTEN}}&call_uuid=${{CALL_UUID}}&provider=asterisk&secret={webhook_secret}\")",
-            " same => n,GotoIf($[\"${SYSTEMSTATUS}\" = \"SUCCESS\"]?curl_ok_s)",
-            " same => n,Set(RETRIES=$[${RETRIES} + 1])",
-            " same => n,GotoIf($[${RETRIES} < 3]?try_curl_s)",
-            " same => n,System(echo \"[${STRFTIME(${EPOCH},,%Y-%m-%d %H:%M:%S)}] Webhook failed for CALL_UUID ${CALL_UUID} caller ${CALLERID(num)} dialed s\" >> /var/log/asterisk/webhook_fail.log)",
+            f" same => n,Set(CALL_PERMISSION=${{CURL({base_api_url}/api/webhooks/asterisk/inbound?caller_id=${{CALLERID(num)}}\&dialed_number=${{EXTEN}}\&call_uuid=${{CALL_UUID}}\&provider=asterisk\&secret={webhook_secret})}})",
+            " same => n,GotoIf($[\"${CALL_PERMISSION:0:5}\"=\"ALLOW\"]?curl_ok_s:reject_s)",
+            " same => n(reject_s),NoOp(Call rejected: ${CALL_PERMISSION})",
+            " same => n,Hangup(21)",
             " same => n(curl_ok_s),Answer()",
             " same => n,AudioSocket(${CALL_UUID},127.0.0.1:9092)",
             " same => n,Hangup()",
-            ""
         ]
         extensions_conf = "\n".join(ext_lines)
 
@@ -184,3 +178,21 @@ class AsteriskConfigGenerator:
             "firewall_commands": firewall_commands,
             "reload_commands": reload_commands
         }
+
+
+def validate_asterisk_config_syntax(pjsip_text: str, ext_text: str) -> Optional[str]:
+    """Basic Python-side syntax sanity checker for Asterisk config files."""
+    from typing import Optional
+    for name, text in [("PJSIP", pjsip_text), ("Extensions", ext_text)]:
+        open_brackets = text.count("[")
+        close_brackets = text.count("]")
+        if open_brackets != close_brackets:
+            return f"{name} configuration has bracket mismatch: {open_brackets} open vs {close_brackets} close brackets."
+            
+        if name == "Extensions":
+            for line in text.splitlines():
+                line = line.strip()
+                if line and not line.startswith(";") and not line.startswith("["):
+                    if not (line.startswith("exten") or line.startswith("same") or line.startswith("include") or line.startswith("switch")):
+                        return f"Invalid line format in Extensions: '{line}'"
+    return None

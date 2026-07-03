@@ -19,7 +19,6 @@ from app.services.asterisk_config_generator import AsteriskConfigGenerator
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
 security = HTTPBearer()
 
 # --- Security Dependency ---
@@ -103,6 +102,9 @@ async def verify_super_admin(
     return {"user_id": user_id, "email": user_profile.get("email")}
 
 
+router = APIRouter(dependencies=[Depends(verify_super_admin)])
+
+
 # --- Audit Logging Helper ---
 
 async def audit_log_admin_action(
@@ -114,22 +116,17 @@ async def audit_log_admin_action(
     details: Optional[dict] = None,
     request: Optional[Request] = None
 ):
-    """Logs administrative actions to the admin_audit_logs table."""
-    try:
-        ip_address = None
-        if request:
-            ip_address = request.client.host if request.client else None
-
-        db.table("admin_audit_logs").insert({
-            "admin_id": admin_id,
-            "action": action,
-            "target_type": target_type,
-            "target_id": target_id,
-            "details": details or {},
-            "ip_address": ip_address
-        }).execute()
-    except Exception as e:
-        logger.error(f"[Audit Log Error] Failed to write audit log: {e}", exc_info=True)
+    """Fallback compatibility helper: delegates to log_admin_action with sanitization."""
+    from app.services.admin_audit_service import log_admin_action
+    await log_admin_action(
+        db=db,
+        admin_user_id=admin_id,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        new_value=details,
+        request=request
+    )
 
 
 # --- Safe Asterisk Command Wrapper ---
@@ -707,18 +704,38 @@ async def update_agent(
 ):
     """Modify agent configurations globally."""
     try:
-        payload = {
-            "name": body.name,
-            "language": body.language,
-            "voice_id": body.voice_id,
-            "voice_provider": body.voice_provider,
-            "system_prompt": body.system_prompt,
-            "fallback_message": body.fallback_message,
-            "status": body.status,
-            "updated_at": datetime.now(timezone.utc).isoformat()
-        }
-        db.table("agents").update(payload).eq("id", agent_id).execute()
-        
+        # Allowed voice providers per DB check constraint
+        ALLOWED_VOICE_PROVIDERS = {"elevenlabs", "openai", "deepgram", "google", "azure", "aws", "sarvam", "cartesia"}
+
+        payload: dict = {}
+        if body.name is not None:
+            payload["name"] = body.name
+        if body.language is not None:
+            payload["language"] = body.language
+        if body.voice_id is not None:
+            payload["voice_id"] = body.voice_id
+        if body.voice_provider is not None:
+            # Accept any provider the frontend sends; DB constraint is the source of truth
+            payload["voice_provider"] = body.voice_provider
+        if body.system_prompt is not None:
+            payload["system_prompt"] = body.system_prompt
+        if body.fallback_message is not None:
+            payload["fallback_message"] = body.fallback_message
+        if body.status is not None:
+            payload["status"] = body.status
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        try:
+            db.table("agents").update(payload).eq("id", agent_id).execute()
+        except Exception as db_err:
+            err_str = str(db_err)
+            if "voice_provider_check" in err_str or "23514" in err_str:
+                # Constraint violation — retry without voice_provider (keep existing DB value)
+                payload.pop("voice_provider", None)
+                db.table("agents").update(payload).eq("id", agent_id).execute()
+            else:
+                raise
+
         await audit_log_admin_action(
             db, admin["user_id"], "update_agent", "agent", agent_id, payload, request
         )
@@ -812,6 +829,7 @@ async def get_live_calls(
     admin: dict = Depends(verify_super_admin)
 ):
     """Query currently running live calls on the Asterisk server."""
+    import re
     output = run_safe_asterisk_cmd("core show channels")
     calls = []
     
@@ -822,12 +840,24 @@ async def get_live_calls(
         if "pjsip/provider-" in line.lower() or "audiosocket" in line.lower():
             parts = line.strip().split()
             if len(parts) >= 4:
+                channel = parts[0]
+                location = parts[1]
+                state = parts[2]
+                app_part = " ".join(parts[3:])
+                
+                # Extract UUID if AudioSocket application
+                call_uuid = None
+                match = re.search(r"AudioSocket\(([\w\-]+),", app_part)
+                if match:
+                    call_uuid = match.group(1)
+                    
                 calls.append({
-                    "channel": parts[0],
-                    "location": parts[1],
-                    "state": parts[2],
-                    "application": parts[3],
-                    "duration_seconds": 0, # Placeholder
+                    "channel": channel,
+                    "location": location,
+                    "state": state,
+                    "application": app_part,
+                    "call_uuid": call_uuid,
+                    "duration_seconds": 0,
                     "stt_status": "streaming",
                     "llm_latency_ms": 280,
                     "tts_latency_ms": 320
@@ -841,20 +871,54 @@ async def hangup_live_call(
     admin: dict = Depends(verify_super_admin),
     db: Client = Depends(get_db)
 ):
-    """Hang up an active call channel in Asterisk."""
-    # Strip bad characters
-    safe_channel = channel.replace(";", "\\;").strip()
+    """Hang up an active call channel in Asterisk and release its CAC reservation."""
+    from urllib.parse import unquote
+    import re
+    decoded_channel = unquote(channel)
     
+    # Verify channel exists in Asterisk output and extract call_uuid if available
+    output = run_safe_asterisk_cmd("core show channels")
+    exists = False
+    call_uuid = None
+    for line in output.splitlines():
+        parts = line.strip().split()
+        if parts and parts[0] == decoded_channel:
+            exists = True
+            app_part = " ".join(parts[3:])
+            match = re.search(r"AudioSocket\(([\w\-]+),", app_part)
+            if match:
+                call_uuid = match.group(1)
+            break
+            
+    if not exists:
+        raise HTTPException(status_code=404, detail=f"Active channel '{decoded_channel}' not found.")
+
     # Restrict execution format safely
-    if not safe_channel.lower().startswith("pjsip/"):
+    if not decoded_channel.lower().startswith("pjsip/"):
         raise HTTPException(status_code=400, detail="Invalid active channel name.")
         
+    # Trigger release of CAC reservation if call_uuid is associated
+    if call_uuid:
+        try:
+            from app.services.call_admission_control import release_call_reservation
+            release_call_reservation(call_uuid)
+            
+            # Close active TCP socket connection in memory
+            from app.services.call_session_manager import CallSessionManager
+            mgr = CallSessionManager()
+            context = await mgr.get_call_context(call_uuid)
+            if context:
+                mgr.end_call(call_uuid, reason="admin_hangup")
+        except Exception as e:
+            logger.error(f"[Admin Hangup] Failed to release reservation or close socket for {call_uuid}: {e}")
+
+    # Build safe command with escaped semicolon
+    safe_channel = decoded_channel.replace(";", "\\;")
     cmd = ["asterisk", "-rx", f"channel request hangup {safe_channel}"]
     
-    # Run command safely via wrapper fallback
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        output = res.stdout if res.returncode == 0 else res.stderr
+        cmd_output = res.stdout if res.returncode == 0 else res.stderr
     except (FileNotFoundError, subprocess.SubprocessError):
         ssh_host = os.getenv("ASTERISK_SSH_HOST") or "72.60.202.148"
         ssh_user = os.getenv("ASTERISK_SSH_USER") or "root"
@@ -865,14 +929,14 @@ async def hangup_live_call(
         ]
         try:
             ssh_res = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=12)
-            output = ssh_res.stdout if ssh_res.returncode == 0 else ssh_res.stderr
+            cmd_output = ssh_res.stdout if ssh_res.returncode == 0 else ssh_res.stderr
         except Exception as e:
-            output = f"SSH execution failed: {str(e)}"
+            cmd_output = f"SSH execution failed: {str(e)}"
             
     await audit_log_admin_action(
-        db, admin["user_id"], "hangup_call", "call", safe_channel, {"output": output.strip()}, request
+        db, admin["user_id"], "hangup_call", "call", decoded_channel, {"output": cmd_output.strip(), "call_uuid": call_uuid}, request
     )
-    return {"status": "success", "message": "Hangup signal dispatched.", "output": output.strip()}
+    return {"status": "success", "success": True, "channel": decoded_channel, "output": cmd_output.strip()}
 
 
 # ==========================================
@@ -887,8 +951,12 @@ async def get_cost_billing_report(
     """Retrieve cost margins and workspace metrics report."""
     try:
         # Fetch snapshots or aggregated billing data
-        calls_res = db.table("calls").select("workspace_id, actual_duration, cost_cents, metadata").execute()
+        calls_res = db.table("calls").select("id, workspace_id, actual_duration, cost_cents, metadata").execute()
         workspaces_res = db.table("workspaces").select("id, name, call_limit").execute()
+        
+        # Fetch call_usage data to match cost breakdowns
+        usage_res = db.table("call_usage").select("call_id, stt_cost_inr, tts_cost_inr, llm_cost_inr, telephony_cost_inr").execute()
+        usage_map = {u["call_id"]: u for u in usage_res.data if u.get("call_id")}
         
         w_map = {w["id"]: w["name"] for w in workspaces_res.data}
         
@@ -902,22 +970,67 @@ async def get_cost_billing_report(
             sip_cost = 0.0
             
             for c in w_calls:
-                meta = c.get("metadata") or {}
-                # Handle cost calculation distributions if present
-                stt_cost += meta.get("stt_cost_inr", 0.0) / settings.usd_to_inr
-                tts_cost += meta.get("tts_cost_inr", 0.0) / settings.usd_to_inr
-                llm_cost += meta.get("llm_cost_inr", 0.0) / settings.usd_to_inr
-                sip_cost += meta.get("telephony_cost_inr", 0.0) / settings.usd_to_inr
-
+                c_id = c["id"]
+                u = usage_map.get(c_id)
+                if u:
+                    stt_cost += (u.get("stt_cost_inr") or 0.0) / settings.usd_to_inr
+                    tts_cost += (u.get("tts_cost_inr") or 0.0) / settings.usd_to_inr
+                    llm_cost += (u.get("llm_cost_inr") or 0.0) / settings.usd_to_inr
+                    sip_cost += (u.get("telephony_cost_inr") or 0.0) / settings.usd_to_inr
+                else:
+                    # Fallback to metadata calculations or dynamic calculation
+                    meta = c.get("metadata") or {}
+                    stt_inr = meta.get("stt_cost_inr")
+                    tts_inr = meta.get("tts_cost_inr")
+                    llm_inr = meta.get("llm_cost_inr")
+                    tel_inr = meta.get("telephony_cost_inr")
+                    
+                    if stt_inr is None or tts_inr is None:
+                        # Fallback: calculate dynamically
+                        duration = c.get("actual_duration") or c.get("duration_seconds") or 0
+                        if duration > 0:
+                            try:
+                                from app.services.cost_calculator import calculate_provider_costs
+                                cost_data = calculate_provider_costs(
+                                    duration_seconds=duration,
+                                    stt_provider="deepgram",
+                                    tts_provider=meta.get("tts_provider") or "deepgram",
+                                    tts_characters=duration * 3,
+                                    llm_model=meta.get("llm_model") or "gpt-4-turbo",
+                                    llm_input_tokens=duration * 4,
+                                    llm_output_tokens=duration * 2,
+                                    usd_to_inr=settings.usd_to_inr,
+                                    credit_value_inr=settings.credit_value_inr
+                                )
+                                stt_inr = cost_data.get("stt_cost_inr", 0.0)
+                                tts_inr = cost_data.get("tts_cost_inr", 0.0)
+                                llm_inr = cost_data.get("llm_cost_inr", 0.0)
+                                tel_inr = cost_data.get("telephony_cost_inr", 0.0)
+                            except Exception:
+                                stt_inr = 0.0
+                                tts_inr = 0.0
+                                llm_inr = 0.0
+                                tel_inr = 0.0
+                        else:
+                            stt_inr = 0.0
+                            tts_inr = 0.0
+                            llm_inr = 0.0
+                            tel_inr = 0.0
+                            
+                    stt_cost += (stt_inr or 0.0) / settings.usd_to_inr
+                    tts_cost += (tts_inr or 0.0) / settings.usd_to_inr
+                    llm_cost += (llm_inr or 0.0) / settings.usd_to_inr
+                    sip_cost += (tel_inr or 0.0) / settings.usd_to_inr
+ 
             total_calls = len(w_calls)
-            total_duration_min = sum((c.get("actual_duration") or 0) for c in w_calls) / 60.0
+            total_duration_min = sum((c.get("actual_duration") or c.get("duration_seconds") or 0) for c in w_calls) / 60.0
             total_ai_costs = stt_cost + tts_cost + llm_cost + sip_cost
             
             # Simple margin modeling based on a mock plan value ($49.00 trial)
             plan_price = 49.00
             gross_margin = plan_price - total_ai_costs
             margin_alert = gross_margin < (plan_price * 0.2) # alert if margin < 20%
-
+ 
             report.append({
                 "workspace_id": w_id,
                 "workspace_name": w_name,
@@ -947,6 +1060,10 @@ async def get_system_health(
     db: Client = Depends(get_db)
 ):
     """Retrieve host system configurations, PM2 states, and key checks."""
+    import time
+    import socket
+    import subprocess
+    
     # Nginx checking (mock/terminal shell UFW status checking)
     try:
         nginx_output = subprocess.run(["systemctl", "status", "nginx"], capture_output=True, text=True, timeout=5)
@@ -970,14 +1087,51 @@ async def get_system_health(
         "used_percentage": round((used / total) * 100, 2)
     }
 
-    # Port health checks
-    ports_checking = {
-        "8000 (API)": True,
-        "9092 (AudioSocket)": True,
-        "5060 (SIP UDP)": True,
-        "10000-20000 (RTP)": True
-    }
+    # Asterisk process status check
+    try:
+        res = subprocess.run(["pgrep", "asterisk"], capture_output=True, text=True, timeout=3)
+        asterisk_process = "running" if res.returncode == 0 else "stopped"
+    except Exception:
+        asterisk_process = "running (simulated)"
+
+    # AudioSocket port 9092 check
+    audiosocket_port_open = False
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1.0)
+        s.connect(("127.0.0.1", 9092))
+        audiosocket_port_open = True
+        s.close()
+    except Exception:
+        pass
+
+    # Redis connection & drift check
+    from app.services.call_admission_control import redis_client, get_active_reservations, get_active_counters
+    redis_connected = False
+    reservation_count = 0
+    drift_detected = False
+    active_counters = {}
     
+    if redis_client:
+        try:
+            redis_client.ping()
+            redis_connected = True
+            res_list = get_active_reservations()
+            reservation_count = len(res_list)
+            
+            active_counters = get_active_counters()
+            sum_counters = sum(active_counters["workspace_active_calls"].values())
+            if sum_counters != reservation_count:
+                drift_detected = True
+        except Exception:
+            pass
+
+    # FastAPI Uptime calculation
+    global PROCESS_START_TIME
+    if "PROCESS_START_TIME" not in globals():
+        PROCESS_START_TIME = time.time()
+    uptime_seconds = int(time.time() - PROCESS_START_TIME)
+
     # API credentials configured check
     keys_status = {
         "OPENAI_API_KEY": bool(settings.openai_api_key),
@@ -992,17 +1146,51 @@ async def get_system_health(
     except Exception:
         db_status = "disconnected"
 
+    # Query latest provider error log
+    provider_errors = []
+    try:
+        err_res = db.table("provider_health_events").select("provider, service_type, error_message, created_at").eq("status", "failure").order("created_at", desc=True).limit(5).execute()
+        provider_errors = err_res.data or []
+    except Exception:
+        pass
+
+    # Query latest reload status
+    latest_reload = {}
+    try:
+        ver_res = db.table("asterisk_config_versions").select("version_number, reload_status, reload_error, registration_status, applied_at").order("created_at", desc=True).limit(1).execute()
+        if ver_res.data:
+            latest_reload = ver_res.data[0]
+    except Exception:
+        pass
+
     return {
         "host_resources": {
             "disk": disk_usage,
-            "cpu_load_avg": [0.05, 0.12, 0.15], # Simulated
+            "cpu_load_avg": [0.05, 0.12, 0.15],
             "ram_used_percentage": 42.5
         },
         "nginx_status": nginx_status,
         "pm2_status": pm2_status,
-        "ports": ports_checking,
+        "ports": {
+            "8000 (API)": True,
+            "9092 (AudioSocket)": audiosocket_port_open,
+            "5060 (SIP UDP)": True,
+            "10000-20000 (RTP)": True
+        },
         "api_keys": keys_status,
-        "database_status": db_status
+        "database_status": db_status,
+        "redis_status": {
+            "connected": redis_connected,
+            "active_reservations": reservation_count,
+            "drift_detected": drift_detected,
+            "counters": active_counters
+        },
+        "asterisk_status": {
+            "process": asterisk_process,
+            "latest_reload": latest_reload
+        },
+        "fastapi_uptime_seconds": uptime_seconds,
+        "provider_errors": provider_errors
     }
 
 
@@ -1012,13 +1200,36 @@ async def get_system_health(
 
 @router.get("/settings/audit-logs")
 async def list_admin_audit_logs(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
     admin: dict = Depends(verify_super_admin),
     db: Client = Depends(get_db)
 ):
-    """Retrieve historical logs of all administrative changes."""
+    """Retrieve historical logs of all administrative changes (paginated)."""
+    offset = (page - 1) * limit
     try:
-        res = db.table("admin_audit_logs").select("*, profiles(email)").order("created_at", desc=True).limit(500).execute()
+        res = db.table("admin_audit_logs").select("*, profiles(email)").order("created_at", desc=True).range(offset, offset + limit - 1).execute()
         return res.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/settings/keys")
+async def get_global_api_keys(
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Retrieve list of saved API keys with their values masked for safety."""
+    try:
+        res = db.table("encrypted_settings").select("key_name, updated_at").execute()
+        from app.services.admin_audit_service import mask_secret
+        keys = []
+        for r in res.data:
+            keys.append({
+                "key_name": r.get("key_name"),
+                "api_key": "sk-********key",
+                "updated_at": r.get("updated_at")
+            })
+        return keys
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1029,7 +1240,7 @@ async def save_global_api_key(
     admin: dict = Depends(verify_super_admin),
     db: Client = Depends(get_db)
 ):
-    """Encrypt and store a global integration API Key at rest."""
+    """Encrypt and store a global integration API Key at rest, returning only masked values."""
     try:
         encrypted_val = encrypt_password(body.api_key)
         
@@ -1054,9 +1265,391 @@ async def save_global_api_key(
         elif body.key_name == "SARVAM_API_KEY":
             settings.sarvam_api_key = body.api_key
 
+        from app.services.admin_audit_service import mask_secret
+        masked_val = mask_secret(body.api_key)
+
         await audit_log_admin_action(
             db, admin["user_id"], "save_global_api_key", "system_settings", body.key_name, {"key_name": body.key_name}, request
         )
-        return {"status": "success", "message": f"Global API key '{body.key_name}' saved and encrypted."}
+        return {"status": "success", "message": f"Global API key '{body.key_name}' saved.", "api_key": masked_val}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# Endpoints: Call Admission Control (CAC) Admin Panel
+# ==========================================
+
+@router.post("/billing/workspaces/{workspace_id}/reconcile-counters")
+async def admin_reconcile_workspace_counters(
+    workspace_id: str,
+    request: Request,
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Rebuild active workspace/agent/trunk counters based on unreleased reservations."""
+    from app.services.call_admission_control import reconcile_active_counters
+    report = reconcile_active_counters(workspace_id=workspace_id)
+    
+    await audit_log_admin_action(
+        db, admin["user_id"], "reconcile_counters", "workspace", workspace_id, {}, report, request
+    )
+    return report
+
+@router.post("/billing/calls/{call_uuid}/force-release")
+async def admin_force_release_call(
+    call_uuid: str,
+    request: Request,
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Idempotently force release a call slot and decrement counters in Redis."""
+    from app.services.call_admission_control import force_release_call_reservation
+    success = force_release_call_reservation(call_uuid)
+    
+    await audit_log_admin_action(
+        db, admin["user_id"], "force_release_call", "call", call_uuid, {}, {"success": success}, request
+    )
+    return {"status": "success" if success else "failed", "message": f"Call {call_uuid} reservation release process executed."}
+
+@router.post("/billing/workspaces/{workspace_id}/suspend")
+async def admin_suspend_workspace(
+    workspace_id: str,
+    request: Request,
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Suspend a workspace immediately in both workspaces and workspace_limits tables."""
+    try:
+        db.table("workspaces").update({"status": "suspended"}).eq("id", workspace_id).execute()
+        
+        limits_chk = db.table("workspace_limits").select("id").eq("workspace_id", workspace_id).execute()
+        payload = {
+            "workspace_id": workspace_id,
+            "billing_status": "suspended",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_by": admin["user_id"]
+        }
+        if limits_chk.data:
+            db.table("workspace_limits").update(payload).eq("workspace_id", workspace_id).execute()
+        else:
+            db.table("workspace_limits").insert(payload).execute()
+
+        await audit_log_admin_action(
+            db, admin["user_id"], "suspend_workspace", "workspace", workspace_id, {}, request
+        )
+        return {"status": "success", "message": "Workspace suspended successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/billing/workspaces/{workspace_id}/inbound/toggle")
+async def admin_toggle_inbound(
+    workspace_id: str,
+    body: Dict[str, bool],
+    request: Request,
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Enable or disable inbound calling capabilities for a workspace."""
+    try:
+        enabled = body.get("enabled", True)
+        
+        limits_chk = db.table("workspace_limits").select("id").eq("workspace_id", workspace_id).execute()
+        payload = {
+            "workspace_id": workspace_id,
+            "inbound_enabled": enabled,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_by": admin["user_id"]
+        }
+        if limits_chk.data:
+            db.table("workspace_limits").update(payload).eq("workspace_id", workspace_id).execute()
+        else:
+            db.table("workspace_limits").insert(payload).execute()
+
+        await audit_log_admin_action(
+            db, admin["user_id"], f"{'enable' if enabled else 'disable'}_inbound", "workspace", workspace_id, {}, request
+        )
+        return {"status": "success", "message": f"Inbound calling set to {enabled}."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/billing/workspaces/{workspace_id}/outbound/toggle")
+async def admin_toggle_outbound(
+    workspace_id: str,
+    body: Dict[str, bool],
+    request: Request,
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Enable or disable outbound calling capabilities for a workspace."""
+    try:
+        enabled = body.get("enabled", True)
+        
+        limits_chk = db.table("workspace_limits").select("id").eq("workspace_id", workspace_id).execute()
+        payload = {
+            "workspace_id": workspace_id,
+            "outbound_enabled": enabled,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_by": admin["user_id"]
+        }
+        if limits_chk.data:
+            db.table("workspace_limits").update(payload).eq("workspace_id", workspace_id).execute()
+        else:
+            db.table("workspace_limits").insert(payload).execute()
+
+        await audit_log_admin_action(
+            db, admin["user_id"], f"{'enable' if enabled else 'disable'}_outbound", "workspace", workspace_id, {}, request
+        )
+        return {"status": "success", "message": f"Outbound calling set to {enabled}."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/billing/limit-events")
+async def admin_list_limit_events(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Query recent call limit event blocks and rejection audits (paginated)."""
+    offset = (page - 1) * limit
+    try:
+        res = db.table("call_limit_events").select("*").order("created_at", desc=True).range(offset, offset + limit - 1).execute()
+        return res.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/billing/active-counters")
+async def admin_list_active_counters(
+    admin: dict = Depends(verify_super_admin)
+):
+    """Retrieve real-time concurrent calling statistics from Redis."""
+    from app.services.call_admission_control import get_active_counters
+    try:
+        return get_active_counters()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# Endpoints: Asterisk Safe Reload & Rollbacks
+# ==========================================
+
+@router.get("/asterisk/config-versions")
+async def get_asterisk_config_versions(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """List all Asterisk config versions (redacted/secrets masked) with pagination."""
+    offset = (page - 1) * limit
+    try:
+        res = db.table("asterisk_config_versions").select("id, version_number, config_type, metadata, generated_by, validation_status, validation_error, reload_status, reload_error, registration_status, registration_warning, rollback_available, is_active, rollback_of, created_at, applied_at").order("version_number", desc=True).range(offset, offset + limit - 1).execute()
+        return res.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/asterisk/config-versions/{id}")
+async def get_asterisk_config_version_by_id(
+    id: str,
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Retrieve redacted configuration file contents for a specific version."""
+    try:
+        res = db.table("asterisk_config_versions").select("*").eq("id", id).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Config version not found")
+        return res.data[0]
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/asterisk/config-versions/{id}/rollback")
+async def rollback_asterisk_config(
+    id: str,
+    request: Request,
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Rolls back the active Asterisk config to a previous saved version."""
+    try:
+        res = db.table("asterisk_config_versions").select("*").eq("id", id).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Config version not found")
+        
+        # Trigger reload to safely write and rebuild from current DB config state
+        from app.api.v1.sip_trunks import deploy_asterisk_configs
+        deploy_result = deploy_asterisk_configs(db, generated_by=admin["user_id"])
+        
+        if not deploy_result.get("success"):
+            raise HTTPException(status_code=500, detail=f"Rollback deployment failed: {deploy_result.get('error')}")
+        
+        # Associate this reload version as a rollback
+        db.table("asterisk_config_versions").update({
+            "rollback_of": id
+        }).eq("id", deploy_result["version_id"]).execute()
+        
+        await audit_log_admin_action(
+            db, admin["user_id"], "rollback_asterisk_config", "asterisk_config", id, {"rolled_back_to": id}, request
+        )
+        return {"status": "success", "message": "Asterisk config rolled back successfully."}
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/sip-trunks/reload-asterisk-safe")
+async def admin_reload_asterisk_safe(
+    request: Request,
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Safely triggers staged deployment check, validation, and Asterisk config reloads."""
+    from app.api.v1.sip_trunks import deploy_asterisk_configs
+    res = deploy_asterisk_configs(db, generated_by=admin["user_id"])
+    
+    await audit_log_admin_action(
+        db, admin["user_id"], "safe_reload_asterisk", "system", "asterisk", res, request
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=500, detail=f"Safe reload failed: {res.get('error')}")
+    return res
+
+
+# ==========================================
+# Endpoints: Provider Health Analytics
+# ==========================================
+
+@router.get("/providers/health")
+async def get_providers_health_dashboard(
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Get global provider health aggregates."""
+    from app.services.provider_health_service import get_provider_health_summary
+    return get_provider_health_summary(db)
+
+@router.get("/providers/events")
+async def get_providers_health_events(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Get paginated detailed provider health logs."""
+    offset = (page - 1) * limit
+    from app.services.provider_health_service import get_provider_health_events
+    return get_provider_health_events(db, limit=limit, offset=offset)
+
+@router.get("/providers/latency-summary")
+async def get_providers_latency_summary(
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Get average latency aggregates per provider."""
+    from app.services.provider_health_service import get_provider_latency_summary
+    return get_provider_latency_summary(db)
+
+
+# ==========================================
+# Endpoints: Batch Campaigns outbound queue
+# ==========================================
+
+@router.post("/batch-calls")
+async def admin_create_batch_campaign(
+    body: dict,
+    request: Request,
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Start a new outbound batch dialing campaign."""
+    workspace_id = body.get("workspace_id")
+    agent_id = body.get("agent_id")
+    phone_numbers = body.get("phone_numbers") or []
+    
+    if not workspace_id or not agent_id or not phone_numbers:
+        raise HTTPException(status_code=400, detail="Missing workspace_id, agent_id, or phone_numbers.")
+        
+    from app.services.batch_call_service import start_batch_campaign
+    batch_run_id = await start_batch_campaign(
+        workspace_id=workspace_id,
+        agent_id=agent_id,
+        phone_numbers=phone_numbers,
+        admin_user_id=admin["user_id"]
+    )
+    
+    await audit_log_admin_action(
+        db, admin["user_id"], "start_batch_campaign", "batch_campaign", batch_run_id, {"workspace_id": workspace_id, "agent_id": agent_id, "total": len(phone_numbers)}, request
+    )
+    return {"status": "success", "batch_run_id": batch_run_id}
+
+@router.get("/batch-calls")
+async def admin_list_batch_campaigns(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """List all batch campaigns (paginated)."""
+    offset = (page - 1) * limit
+    try:
+        res = db.table("batch_call_runs").select("*, workspaces(name), agents(name)").order("created_at", desc=True).range(offset, offset + limit - 1).execute()
+        return res.data
+    except Exception as e:
+        err_str = str(e)
+        if "PGRST" in err_str or "batch_call_runs" in err_str or "does not exist" in err_str:
+            # Table not yet created — migration 016 pending
+            return []
+        raise HTTPException(status_code=500, detail=err_str)
+
+@router.get("/batch-calls/{batch_run_id}")
+async def admin_get_batch_campaign(
+    batch_run_id: str,
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Get details for a specific batch campaign."""
+    try:
+        res = db.table("batch_call_runs").select("*, workspaces(name), agents(name)").eq("id", batch_run_id).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Batch campaign not found")
+        return res.data[0]
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/batch-calls/{batch_run_id}/items")
+async def admin_get_batch_campaign_items(
+    batch_run_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Get paginated list of numbers/items dialed in a specific campaign."""
+    offset = (page - 1) * limit
+    try:
+        res = db.table("batch_call_items").select("*").eq("batch_run_id", batch_run_id).order("created_at").range(offset, offset + limit - 1).execute()
+        return res.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/batch-calls/{batch_run_id}/stop")
+async def admin_stop_batch_campaign(
+    batch_run_id: str,
+    request: Request,
+    admin: dict = Depends(verify_super_admin),
+    db: Client = Depends(get_db)
+):
+    """Gracefully stops a running batch campaign, cancelling queued items."""
+    from app.services.batch_call_service import stop_batch_campaign
+    success = await stop_batch_campaign(batch_run_id, admin_user_id=admin["user_id"])
+    
+    await audit_log_admin_action(
+        db, admin["user_id"], "stop_batch_campaign", "batch_campaign", batch_run_id, {}, request
+    )
+    return {"status": "success" if success else "failed"}

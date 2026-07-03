@@ -9,7 +9,8 @@ logger = logging.getLogger(__name__)
 
 @router.get("/{workspace_id}/phone-numbers")
 async def list_phone_numbers(workspace_id: str, db: Client = Depends(get_db)):
-    result = (
+    # Fetch from legacy phone_numbers table
+    pn_result = (
         db.table("phone_numbers")
         .select("*, agents(id, name)")
         .eq("workspace_id", workspace_id)
@@ -17,7 +18,32 @@ async def list_phone_numbers(workspace_id: str, db: Client = Depends(get_db)):
         .order("created_at", desc=True)
         .execute()
     )
-    return result.data
+
+    # Also fetch from did_numbers (managed by admin panel)
+    did_result = (
+        db.table("did_numbers")
+        .select("*, agents(id, name)")
+        .eq("workspace_id", workspace_id)
+        .neq("status", "deleted")
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    # Normalise did_numbers rows to match phone_numbers shape
+    did_ids = {row["id"] for row in pn_result.data}  # avoid duplicates if somehow present in both
+    normalised_dids = []
+    for d in (did_result.data or []):
+        if d["id"] not in did_ids:
+            normalised_dids.append({
+                **d,
+                "friendly_name": d.get("label") or d.get("phone_number"),
+                "provider_id": d.get("id"),
+                "inbound_enabled": d.get("inbound_enabled", False),
+                "outbound_enabled": d.get("outbound_enabled", True),
+                "source": "did_numbers",   # hint for frontend if needed
+            })
+
+    return pn_result.data + normalised_dids
 
 
 @router.post("/{workspace_id}/phone-numbers")

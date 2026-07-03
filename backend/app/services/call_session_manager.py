@@ -121,7 +121,21 @@ class CallSessionManager:
     def end_call(self, call_uuid: str, reason: str = "hangup") -> bool:
         context = self.active_calls.get(call_uuid)
         if not context:
+            # Still attempt to release from Redis even if context was cleaned up
+            try:
+                from app.services.call_admission_control import release_call_reservation
+                release_call_reservation(call_uuid)
+            except Exception:
+                pass
             return False
+
+        # Release Redis slot
+        try:
+            from app.services.call_admission_control import release_call_reservation
+            release_call_reservation(call_uuid)
+        except Exception as e:
+            logger.error(f"[CallSessionManager] Failed to release call reservation: {e}")
+
         context["status"] = "completed"
         context["ended_at"] = datetime.now(timezone.utc).isoformat()
         context["end_reason"] = reason
@@ -139,14 +153,77 @@ class CallSessionManager:
         logger.info(f"[CallSessionManager] Call {call_uuid} ended. Reason: {reason}, Duration: {duration}s")
 
         db = get_supabase_client()
+        
+        # Calculate estimated cost if cost_calculator is present (or default to 0.0)
+        cost_data = None
+        estimated_cost = 0.0
+        try:
+            from app.services.cost_calculator import calculate_provider_costs
+            from app.core.config import settings
+            cost_data = calculate_provider_costs(
+                duration_seconds=duration,
+                stt_provider="deepgram",
+                tts_provider=context.get("agent_config", {}).get("tts_provider") or "deepgram",
+                tts_characters=duration * 3, # Estimate 3 chars per second
+                llm_model=context.get("agent_config", {}).get("model") or "gpt-4-turbo",
+                llm_input_tokens=duration * 4, # Estimate 4 tokens per second input
+                llm_output_tokens=duration * 2, # Estimate 2 tokens per second output
+                usd_to_inr=settings.usd_to_inr,
+                credit_value_inr=settings.credit_value_inr
+            )
+            estimated_cost = float(cost_data.get("credits_used") or 0.0)
+        except Exception as calc_err:
+            logger.warning(f"Could not calculate call usage cost: {calc_err}")
+
         def _update():
             try:
+                # Update call row in DB
                 db.table("calls").update({
                     "status": "completed",
                     "ended_at": context["ended_at"],
                     "duration_seconds": duration,
-                    "actual_duration": duration
+                    "actual_duration": duration,
+                    "hangup_reason": reason,
+                    "estimated_cost": estimated_cost
                 }).eq("call_uuid", call_uuid).execute()
+
+                # Save cost breakdown in call_usage table
+                if cost_data:
+                    cost_data["call_id"] = call_uuid
+                    cost_data["cost_status"] = "final"
+                    cost_data["cost_finalized_at"] = datetime.now(timezone.utc).isoformat()
+                    db.table("call_usage").upsert(cost_data, on_conflict="call_id").execute()
+
+                # Update workspace monthly usage counter
+                workspace_id = context.get("workspace_id")
+                if workspace_id and duration > 0:
+                    current_month = datetime.now(timezone.utc).strftime("%Y-%m")
+                    used_seconds = duration
+                    used_minutes = round(duration / 60.0, 4)
+
+                    # Fetch current monthly usage row
+                    usage_res = db.table("workspace_usage_counters").select("*").eq("workspace_id", workspace_id).eq("billing_month", current_month).execute()
+                    if usage_res.data:
+                        row = usage_res.data[0]
+                        new_seconds = int(row.get("used_seconds") or 0) + used_seconds
+                        new_minutes = float(row.get("used_minutes") or 0.0) + used_minutes
+                        new_cost = float(row.get("estimated_cost") or 0.0) + estimated_cost
+                        db.table("workspace_usage_counters").update({
+                            "used_seconds": new_seconds,
+                            "used_minutes": new_minutes,
+                            "estimated_cost": new_cost,
+                            "updated_at": datetime.now(timezone.utc).isoformat()
+                        }).eq("id", row["id"]).execute()
+                    else:
+                        db.table("workspace_usage_counters").insert({
+                            "workspace_id": workspace_id,
+                            "billing_month": current_month,
+                            "used_seconds": used_seconds,
+                            "used_minutes": used_minutes,
+                            "estimated_cost": estimated_cost,
+                            "updated_at": datetime.now(timezone.utc).isoformat()
+                        }).execute()
+                    logger.info(f"[CallSessionManager] Updated monthly usage counter for workspace {workspace_id}")
             except Exception as e:
                 logger.error(f"[CallSessionManager] DB update error on end_call {call_uuid}: {e}")
 

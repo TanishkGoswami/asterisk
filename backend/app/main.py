@@ -51,10 +51,7 @@ app.add_middleware(
 )
 
 
-@app.options("/{full_path:path}")
-async def options_handler(full_path: str):
-    """Handle CORS preflight requests"""
-    return {"status": "ok"}
+
 
 
 # Include routers

@@ -95,8 +95,18 @@ class STTService:
         url = f"wss://api.deepgram.com/v1/listen?{params}"
         headers = {"Authorization": f"Token {self.api_key}"}
 
+        start_time = asyncio.get_event_loop().time()
         try:
             async with websockets.connect(url, additional_headers=headers, ping_interval=None) as dg_ws:
+                conn_latency = int((asyncio.get_event_loop().time() - start_time) * 1000)
+                from app.services.provider_health_service import log_provider_health_event
+                asyncio.create_task(asyncio.to_thread(
+                    log_provider_health_event,
+                    provider="deepgram",
+                    service_type="stt",
+                    status="success",
+                    latency_ms=conn_latency
+                ))
                 logger.info("Deepgram STT WS connected (endpointing=%dms)", endpointing)
 
                 # Task: pump audio_queue → Deepgram
@@ -181,5 +191,16 @@ class STTService:
                     keepalive_task.cancel()
 
         except Exception as exc:
+            conn_latency = int((asyncio.get_event_loop().time() - start_time) * 1000)
+            from app.services.provider_health_service import log_provider_health_event
+            asyncio.create_task(asyncio.to_thread(
+                log_provider_health_event,
+                provider="deepgram",
+                service_type="stt",
+                status="failure",
+                latency_ms=conn_latency,
+                error_code="WS_CONN_ERROR",
+                error_message=str(exc)
+            ))
             logger.error("STT WS connection error: %s", exc, exc_info=True)
             yield EVT_ERROR, {"message": str(exc)}

@@ -872,8 +872,26 @@ class AsteriskAudioSocketServer:
             call_session_manager.register_cleanup_callback(call_uuid, session.close_from_manager)
             call_session_manager.start_audio_session(call_uuid)
             self.active_connections[call_uuid] = asyncio.current_task()
+            
+            from app.services.call_admission_control import run_live_call_monitor
+            async def hangup_callback(reason: str):
+                logger.warning(f"[AudioSocket] Hangup triggered by monitor for call {call_uuid}: reason={reason}")
+                try:
+                    db = get_supabase_client()
+                    db.table("calls").update({
+                        "hangup_reason": reason,
+                        "status": "failed"
+                    }).eq("call_uuid", call_uuid).execute()
+                except Exception as e:
+                    logger.error(f"[AudioSocket] Failed to update hangup reason in DB: {e}")
+                session.close_from_manager(call_uuid)
+
+            monitor_task = asyncio.create_task(run_live_call_monitor(call_uuid, hangup_callback))
             try:
-                await session.run()
+                try:
+                    await session.run()
+                finally:
+                    monitor_task.cancel()
             except asyncio.CancelledError:
                 logger.audiosocket_connection_closed("cancelled")
             except (asyncio.IncompleteReadError, ConnectionError, BrokenPipeError, ConnectionResetError) as e:

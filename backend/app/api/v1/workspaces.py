@@ -29,10 +29,14 @@ async def setup_workspace(data: Dict[str, Any], db: Client = Depends(get_db)):
 
         # If no workspace exists, upsert profile and create default workspace
         logger.info(f"[setup] upserting profile for {user_id}")
-        db.table("profiles").upsert(
-            {"id": user_id, "email": email},
-            on_conflict="id"
-        ).execute()
+        try:
+            db.table("profiles").upsert(
+                {"id": user_id, "email": email, "role": "user"},
+                on_conflict="id"
+            ).execute()
+        except Exception as profile_err:
+            # Profile may already exist or role column may differ — log but continue
+            logger.warning(f"[setup] profile upsert warning (non-fatal): {profile_err}")
 
         logger.info(f"[setup] creating workspace")
         workspace = db.table("workspaces").insert({

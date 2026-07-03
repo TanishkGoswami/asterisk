@@ -26,6 +26,8 @@ class TTSService:
         text: str,
         voice_id: str = "aura-asteria-en",
     ) -> bytes:
+        import time
+        start_time = time.time()
         url = f"{DG_TTS_REST_URL}?model={voice_id}"
         headers = {
             "Authorization": f"Token {self.api_key}",
@@ -35,11 +37,19 @@ class TTSService:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json={"text": text}, headers=headers) as resp:
                     if resp.status == 200:
-                        return await resp.read()
+                        res_bytes = await resp.read()
+                        latency = int((time.time() - start_time) * 1000)
+                        from app.services.provider_health_service import log_provider_health_event
+                        log_provider_health_event("deepgram", "tts", "success", latency_ms=latency)
+                        return res_bytes
                     error_text = await resp.text()
                     logger.error("Deepgram TTS REST failed: %s - %s", resp.status, error_text)
                     raise Exception(f"TTS failed with status {resp.status}")
         except Exception as e:
+            latency = int((time.time() - start_time) * 1000)
+            from app.services.provider_health_service import log_provider_health_event
+            status = "429_rate_limited" if "429" in str(e) else "failure"
+            log_provider_health_event("deepgram", "tts", status, latency_ms=latency, error_code="REST_ERROR", error_message=str(e))
             logger.error("TTS synthesize failed: %s", e)
             raise
 
@@ -93,10 +103,23 @@ class TTSService:
         voice_id: str = "aura-asteria-en",
     ) -> bytes:
         """Collect all audio bytes for a sentence via WS and return as one blob."""
-        chunks: list[bytes] = []
-        async for chunk in self.synthesize_ws_stream(text, voice_id):
-            chunks.append(chunk)
-        return b"".join(chunks)
+        import time
+        start_time = time.time()
+        try:
+            chunks: list[bytes] = []
+            async for chunk in self.synthesize_ws_stream(text, voice_id):
+                chunks.append(chunk)
+            res_bytes = b"".join(chunks)
+            latency = int((time.time() - start_time) * 1000)
+            from app.services.provider_health_service import log_provider_health_event
+            log_provider_health_event("deepgram", "tts", "success", latency_ms=latency)
+            return res_bytes
+        except Exception as e:
+            latency = int((time.time() - start_time) * 1000)
+            from app.services.provider_health_service import log_provider_health_event
+            status = "429_rate_limited" if "429" in str(e) else "failure"
+            log_provider_health_event("deepgram", "tts", status, latency_ms=latency, error_code="WS_ERROR", error_message=str(e))
+            raise
 
 
 class WarmTTSConnection:
