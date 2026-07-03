@@ -51,7 +51,10 @@ function SuperAdminDashboard() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
-      const headers = { Authorization: `Bearer ${session.access_token}` };
+      const headers = { 
+        Authorization: `Bearer ${session.access_token}`,
+        "ngrok-skip-browser-warning": "true"
+      };
       const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
       // 1. Fetch Summary Stats

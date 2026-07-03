@@ -13,6 +13,8 @@ import {
   Settings,
   ArrowLeft,
   Search,
+  Layers,
+  FileText,
 } from "lucide-react";
 import {
   Sidebar,
@@ -29,48 +31,52 @@ import {
 } from "../ui/sidebar";
 import { supabase } from "@/lib/supabase";
 
+interface SidebarItem {
+  title: string;
+  url: string;
+  icon: any;
+}
+
+interface SidebarSection {
+  label: string;
+  items: SidebarItem[];
+}
+
 export function AdminSidebar() {
   const location = useLocation();
-  const [userName, setUserName] = useState("Admin");
-  const [userInitials, setUserInitials] = useState("AD");
+  const [profile, setProfile] = useState<any>(null);
 
   useEffect(() => {
-    const fetchUser = async () => {
-      if (!supabase) return;
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const name = user.user_metadata?.full_name || user.email || "Super Admin";
-          setUserName(name);
-          const initials = name
-            .split(" ")
-            .map((n: string) => n[0])
-            .join("")
-            .substring(0, 2)
-            .toUpperCase();
-          setUserInitials(initials);
-        }
-      } catch (e) {
-        console.error("Failed to fetch user:", e);
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", session.user.id)
+          .single()
+          .then(({ data }) => setProfile(data));
       }
-    };
-    fetchUser();
+    });
   }, []);
 
-  const adminGroups = [
+  const sections: SidebarSection[] = [
     {
-      label: "PLATFORM ADMIN",
+      label: "SYSTEM",
       items: [
         { title: "Dashboard", url: "/admin", icon: LayoutDashboard },
+        { title: "Live Calls", url: "/admin/live-calls", icon: AudioLines },
         { title: "Workspaces", url: "/admin/workspaces", icon: Building2 },
+        { title: "SIP Trunks", url: "/admin/sip-trunks", icon: Smartphone },
+        { title: "DID Numbers", url: "/admin/did-numbers", icon: PhoneCall },
       ],
     },
     {
-      label: "TELEPHONY",
+      label: "OPERATIONS",
       items: [
-        { title: "SIP Trunks", url: "/admin/sip-trunks", icon: AudioLines },
-        { title: "Phone Numbers", url: "/admin/did-numbers", icon: Smartphone },
-        { title: "Live Monitor", url: "/admin/live-calls", icon: PhoneCall },
+        { title: "Call Admission", url: "/admin/call-admission", icon: Layers },
+        { title: "Asterisk Configs", url: "/admin/asterisk-configs", icon: FileText },
+        { title: "Provider Health", url: "/admin/providers", icon: Activity },
+        { title: "Batch Campaigns", url: "/admin/batch-calls", icon: PhoneCall },
       ],
     },
     {
@@ -108,7 +114,7 @@ export function AdminSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="p-2">
-        {adminGroups.map((group, idx) => (
+        {sections.map((group, idx) => (
           <SidebarGroup key={idx} className="mb-2">
             <SidebarGroupLabel className="px-3 text-[10px] font-bold tracking-[0.15em] text-black/30">
               {group.label}

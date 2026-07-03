@@ -83,6 +83,14 @@ class Settings(BaseSettings):
     stt_timeout_seconds: float = 3.0
     llm_timeout_seconds: float = 4.0
     tts_timeout_seconds: float = 5.0
+
+    # Call Admission Control (CAC) Configs
+    allow_calls_without_redis: bool = False
+    default_workspace_max_concurrent_calls: int = 1
+    default_agent_max_concurrent_calls: int = 1
+    call_reservation_ttl_seconds: int = 7200
+    call_usage_monitor_interval_seconds: int = 15
+    block_overdue_workspaces: bool = True
     
     model_config = {
         "env_file": ".env",
