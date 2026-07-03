@@ -227,126 +227,252 @@ def ensure_includes():
         logger.error(f"Failed to ensure Asterisk config file configuration: {e}")
 
 
-def deploy_asterisk_configs(db: Client) -> None:
+def deploy_asterisk_configs(db: Client, generated_by: Optional[str] = None) -> dict:
     """
     Fetch all active SIP trunks from Supabase, generate their PJSIP and Dialplan configurations,
     write them to /etc/asterisk/pjsip_trunks.conf and /etc/asterisk/extensions_trunks.conf,
-    and reload Asterisk configs with sync safety checks.
+    and reload Asterisk configs with sync safety checks, auto-rollback, and database version logging.
     """
+    import os
+    import shutil
+    import subprocess
+    from app.services.admin_audit_service import redact_config_text
+    
+    result = {
+        "success": False,
+        "validation_status": "pending",
+        "validation_error": None,
+        "reload_status": "not_reloaded",
+        "reload_error": None,
+        "registration_status": "healthy",
+        "registration_warning": None,
+        "rollback_available": False
+    }
+    
+    # 1. Fetch SIP trunks
     try:
-        # Fetch all active/pending trunks
         res = db.table("sip_trunk_providers").select("*").in_("status", ["active", "pending", "disabled"]).execute()
         trunks = res.data or []
+    except Exception as e:
+        logger.error(f"[Safe Reload] Failed to query trunks: {e}")
+        return {"success": False, "error": f"Database query failed: {e}"}
         
-        pjsip_confs = []
-        extensions_confs = []
-        expected_endpoints = []
-        expected_contexts = []
+    pjsip_confs = []
+    extensions_confs = []
+    
+    for trunk in trunks:
+        if trunk.get("status") == "disabled":
+            continue
+        t_id = trunk.get("id")
+        if trunk.get("password_encrypted"):
+            try:
+                trunk["password_decrypted"] = decrypt_password(trunk.get("password_encrypted"))
+            except Exception as dec_err:
+                logger.error(f"Failed to decrypt password for trunk {t_id}: {dec_err}")
+                
+        configs = AsteriskConfigGenerator.generate_config(trunk, mask_password=False)
+        pjsip_confs.append(configs["pjsip_conf"])
+        extensions_confs.append(configs["extensions_conf"])
         
-        for trunk in trunks:
-            if trunk.get("status") == "disabled":
-                continue
-            t_id = trunk.get("id")
-            expected_endpoints.append(f"provider-{t_id}")
-            expected_contexts.append(f"from-provider-{t_id}")
+    pjsip_file_content = "\n\n".join(pjsip_confs)
+    
+    # Build global outbound local context for extensions_trunks.conf once
+    outbound_local_context = (
+        "\n\n; === Outbound Routing Context ===\n"
+        "[outbound-local]\n"
+        "exten => _.,1,NoOp(Outbound local channel originate: ${EXTEN})\n"
+        " same => n,Set(OUTBOUND_CALLER_ID=${CUT(EXTEN,*,1)})\n"
+        " same => n,Set(OUTBOUND_TRUNK_ID=${CUT(EXTEN,*,2)})\n"
+        " same => n,Set(OUTBOUND_DIAL_NUMBER=${CUT(EXTEN,*,3)})\n"
+        " same => n,Set(CALLERID(num)=${OUTBOUND_CALLER_ID})\n"
+        " same => n,Set(CALLERID(name)=${OUTBOUND_CALLER_ID})\n"
+        " same => n,Dial(PJSIP/${OUTBOUND_DIAL_NUMBER}@provider-${OUTBOUND_TRUNK_ID})\n"
+        " same => n,Hangup()\n"
+    )
+    
+    extensions_file_content = "\n\n".join(extensions_confs) + outbound_local_context
+    
+    # Redact configs for DB storage
+    redacted_pjsip = redact_config_text(pjsip_file_content)
+    redacted_ext = redact_config_text(extensions_file_content)
+    
+    # 2. Store new version in DB (validation_status = 'pending')
+    try:
+        ver_res = db.table("asterisk_config_versions").select("version_number").order("version_number", desc=True).limit(1).execute()
+        next_ver = 1
+        if ver_res.data:
+            next_ver = int(ver_res.data[0]["version_number"] or 0) + 1
             
-            # Decrypt password
-            if trunk.get("password_encrypted"):
-                try:
-                    trunk["password_decrypted"] = decrypt_password(trunk.get("password_encrypted"))
-                except Exception as dec_err:
-                    logger.error(f"Failed to decrypt password for trunk {t_id}: {dec_err}")
-            
-            configs = AsteriskConfigGenerator.generate_config(trunk, mask_password=False)
-            pjsip_confs.append(configs["pjsip_conf"])
-            extensions_confs.append(configs["extensions_conf"])
-            
-        pjsip_file_content = "\n\n".join(pjsip_confs)
-        extensions_file_content = "\n\n".join(extensions_confs)
+        version_payload = {
+            "version_number": next_ver,
+            "config_type": "full",
+            "pjsip_config": redacted_pjsip,
+            "extensions_config": redacted_ext,
+            "validation_status": "pending",
+            "reload_status": "not_reloaded",
+            "generated_by": generated_by,
+            "metadata": {"trunks_count": len(trunks)}
+        }
+        ins_res = db.table("asterisk_config_versions").insert(version_payload).execute()
+        version_record_id = ins_res.data[0]["id"]
+    except Exception as e:
+        logger.error(f"[Safe Reload] Failed to save config version to DB: {e}")
+        return {"success": False, "error": f"Failed to save version: {e}"}
+
+    # 3. Validate config
+    from app.services.asterisk_config_generator import validate_asterisk_config_syntax
+    val_err = validate_asterisk_config_syntax(pjsip_file_content, extensions_file_content)
+    if val_err:
+        db.table("asterisk_config_versions").update({
+            "validation_status": "failed",
+            "validation_error": val_err
+        }).eq("id", version_record_id).execute()
+        return {"success": False, "error": f"Validation failed: {val_err}"}
         
-        import os
-        import subprocess
-        
+    db.table("asterisk_config_versions").update({
+        "validation_status": "passed"
+    }).eq("id", version_record_id).execute()
+    
+    # 4. Backup existing config files on the local VPS
+    pjsip_path = "/etc/asterisk/pjsip_trunks.conf"
+    ext_path = "/etc/asterisk/extensions_trunks.conf"
+    pjsip_bak = "/etc/asterisk/pjsip_trunks.conf.bak"
+    ext_bak = "/etc/asterisk/extensions_trunks.conf.bak"
+    
+    backed_up_pjsip = False
+    backed_up_ext = False
+    
+    if os.path.exists(pjsip_path):
+        try:
+            shutil.copy2(pjsip_path, pjsip_bak)
+            backed_up_pjsip = True
+        except Exception as e:
+            logger.error(f"[Safe Reload] Backup pjsip failed: {e}")
+            
+    if os.path.exists(ext_path):
+        try:
+            shutil.copy2(ext_path, ext_bak)
+            backed_up_ext = True
+        except Exception as e:
+            logger.error(f"[Safe Reload] Backup extensions failed: {e}")
+
+    pre_registrations = {}
+    try:
+        reg_output = subprocess.run(["asterisk", "-rx", "pjsip show registrations"], capture_output=True, text=True, timeout=5)
+        if reg_output.returncode == 0:
+            for line in reg_output.stdout.splitlines():
+                parts = line.strip().split()
+                if len(parts) >= 3:
+                    pre_registrations[parts[0]] = parts[-1]
+    except Exception:
+        pass
+
+    # 5. Write new configs atomically
+    try:
         os.makedirs("/etc/asterisk", exist_ok=True)
-        
-        with open("/etc/asterisk/pjsip_trunks.conf", "w") as f:
+        with open(pjsip_path, "w") as f:
             f.write(pjsip_file_content)
-            
-        with open("/etc/asterisk/extensions_trunks.conf", "w") as f:
+        with open(ext_path, "w") as f:
             f.write(extensions_file_content)
             
-        logger.info("Successfully wrote Asterisk config files to /etc/asterisk/")
-        
-        # Ensure include lines exist
         ensure_includes()
+    except Exception as e:
+        logger.error(f"[Safe Reload] Config write failed: {e}")
+        if backed_up_pjsip:
+            shutil.copy2(pjsip_bak, pjsip_path)
+        if backed_up_ext:
+            shutil.copy2(ext_bak, ext_path)
+            
+        db.table("asterisk_config_versions").update({
+            "reload_status": "failed",
+            "reload_error": f"File write failed: {e}"
+        }).eq("id", version_record_id).execute()
+        return {"success": False, "error": f"File write failed: {e}"}
+
+    # 6. Reload Asterisk
+    reload_failed = False
+    reload_err_msg = ""
+    try:
+        res1 = subprocess.run(["asterisk", "-rx", "pjsip reload"], capture_output=True, text=True, timeout=5)
+        res2 = subprocess.run(["asterisk", "-rx", "dialplan reload"], capture_output=True, text=True, timeout=5)
+        res3 = subprocess.run(["asterisk", "-rx", "module reload res_pjsip.so"], capture_output=True, text=True, timeout=5)
         
-        # Reload Asterisk in order
-        mismatch = False
+        if res1.returncode != 0 or res2.returncode != 0 or res3.returncode != 0:
+            reload_failed = True
+            reload_err_msg = f"Reload error: PJSIP={res1.stderr.strip()}, Dialplan={res2.stderr.strip()}"
+    except Exception as exc:
+        reload_failed = True
+        reload_err_msg = str(exc)
+        
+    # 7. Verification of registration status post-reload
+    registration_status = "healthy"
+    registration_warning = None
+    
+    if not reload_failed:
+        import time
+        time.sleep(2)
         try:
-            # Unload unbound resolver first to ensure standard system resolver handles DNS queries
-            subprocess.run(["asterisk", "-rx", "module unload res_resolver_unbound.so"], capture_output=True, text=True, timeout=5)
-            # 1. pjsip reload
-            subprocess.run(["asterisk", "-rx", "pjsip reload"], capture_output=True, text=True, timeout=5)
-            # 2. dialplan reload
-            subprocess.run(["asterisk", "-rx", "dialplan reload"], capture_output=True, text=True, timeout=5)
-            # 3. module reload res_pjsip.so
-            subprocess.run(["asterisk", "-rx", "module reload res_pjsip.so"], capture_output=True, text=True, timeout=5)
-            
-            # Verify endpoints and contexts are loaded properly
-            endpoints_res = subprocess.run(["asterisk", "-rx", "pjsip show endpoints"], capture_output=True, text=True, timeout=5)
-            dialplan_res = subprocess.run(["asterisk", "-rx", "dialplan show"], capture_output=True, text=True, timeout=5)
-            
-            if endpoints_res.returncode == 0:
-                endpoints_out = endpoints_res.stdout
-                for ep in expected_endpoints:
-                    if ep not in endpoints_out:
-                        logger.warning(f"Verification mismatch: endpoint {ep} not found in Asterisk endpoints")
-                        mismatch = True
-                        
-            if dialplan_res.returncode == 0:
-                dialplan_out = dialplan_res.stdout
-                for ctx in expected_contexts:
-                    if ctx not in dialplan_out:
-                        logger.warning(f"Verification mismatch: context {ctx} not found in Asterisk dialplan")
-                        mismatch = True
-                        
-            # If verification failed, core reload to ensure no stale config or duplicate issues
-            if mismatch:
-                logger.warning("Verification mismatch detected, performing core reload...")
-                subprocess.run(["asterisk", "-rx", "core reload"], capture_output=True, text=True, timeout=10)
+            reg_output = subprocess.run(["asterisk", "-rx", "pjsip show registrations"], capture_output=True, text=True, timeout=5)
+            if reg_output.returncode == 0:
+                post_registrations = {}
+                for line in reg_output.stdout.splitlines():
+                    parts = line.strip().split()
+                    if len(parts) >= 3:
+                        post_registrations[parts[0]] = parts[-1]
                 
-            logger.info("Asterisk reloaded and verified successfully.")
-            return
-        except FileNotFoundError:
-            logger.warning("Asterisk CLI not found, attempting AMI reload fallback...")
+                # Check for dropped registrations
+                for reg_name, pre_state in pre_registrations.items():
+                    post_state = post_registrations.get(reg_name)
+                    if pre_state.lower() == "registered" and post_state != "Registered":
+                        registration_status = "failed"
+                        registration_warning = f"Registration for trunk '{reg_name}' dropped post-reload."
+                        logger.warning(registration_warning)
+                        break
+        except Exception as e:
+            logger.warning(f"Could not parse post-reload registrations: {e}")
+
+    # 8. Trigger rollback if reload failed or registration became failed
+    if reload_failed or registration_status == "failed":
+        logger.error(f"[Safe Reload] Failure detected. Rolling back...")
+        
+        if backed_up_pjsip:
+            shutil.copy2(pjsip_bak, pjsip_path)
+        if backed_up_ext:
+            shutil.copy2(ext_bak, ext_path)
             
-        # AMI Reload fallback
-        import socket
-        ami_host = os.getenv("AMI_HOST") or "127.0.0.1"
-        ami_port = int(os.getenv("AMI_PORT") or 5038)
-        ami_user = os.getenv("AMI_USERNAME") or "admin"
-        ami_pass = os.getenv("AMI_PASSWORD") or "amp111"
+        try:
+            subprocess.run(["asterisk", "-rx", "pjsip reload"], capture_output=True, text=True, timeout=5)
+            subprocess.run(["asterisk", "-rx", "dialplan reload"], capture_output=True, text=True, timeout=5)
+            subprocess.run(["asterisk", "-rx", "module reload res_pjsip.so"], capture_output=True, text=True, timeout=5)
+        except Exception as rollback_err:
+            logger.critical(f"Critical: Rollback Asterisk reload failed: {rollback_err}")
+            
+        db.table("asterisk_config_versions").update({
+            "reload_status": "failed",
+            "reload_error": reload_err_msg or registration_warning,
+            "registration_status": registration_status,
+            "registration_warning": registration_warning,
+            "rollback_available": False,
+            "is_active": False
+        }).eq("id", version_record_id).execute()
         
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(3.0)
-        s.connect((ami_host, ami_port))
-        s.recv(1024)
+        return {"success": False, "error": reload_err_msg or registration_warning}
+
+    # 9. Success - update DB version state
+    try:
+        db.table("asterisk_config_versions").update({"is_active": False}).neq("id", version_record_id).execute()
+        db.table("asterisk_config_versions").update({
+            "reload_status": "success",
+            "registration_status": "healthy",
+            "is_active": True,
+            "applied_at": datetime.now(timezone.utc).isoformat()
+        }).eq("id", version_record_id).execute()
         
-        login_cmd = f"Action: Login\r\nUsername: {ami_user}\r\nSecret: {ami_pass}\r\n\r\n"
-        s.sendall(login_cmd.encode())
-        res = s.recv(4096).decode()
-        if "Success" in res:
-            s.sendall(b"Action: Command\r\nCommand: pjsip reload\r\n\r\n")
-            s.recv(4096)
-            s.sendall(b"Action: Command\r\nCommand: dialplan reload\r\n\r\n")
-            s.recv(4096)
-            s.sendall(b"Action: Command\r\nCommand: module reload res_pjsip.so\r\n\r\n")
-            s.recv(4096)
-            s.sendall(b"Action: Logoff\r\n\r\n")
-            logger.info("Asterisk reloaded via AMI successfully")
-        else:
-            logger.error("Failed to login to Asterisk AMI for reload")
-        s.close()
+        logger.info("Staged config version successfully applied.")
+        return {"success": True, "version_id": version_record_id, "version_number": next_ver}
+    except Exception as e:
+        logger.error(f"Failed to finalize config version state: {e}")
+        return {"success": True, "version_id": version_record_id, "version_number": next_ver}
             
     except Exception as e:
         logger.error(f"Failed to reload Asterisk config: {e}", exc_info=True)

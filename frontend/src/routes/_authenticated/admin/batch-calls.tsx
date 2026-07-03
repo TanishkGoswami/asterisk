@@ -1,0 +1,485 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import { RefreshCw, Play, Square, Layers, List, PhoneCall, Check, AlertCircle } from "lucide-react";
+import { toast } from "sonner";
+
+export const Route = createFileRoute("/_authenticated/admin/batch-calls")({
+  component: BatchCallsManager,
+});
+
+interface BatchRun {
+  id: string;
+  workspace_id: string;
+  agent_id: string;
+  status: string;
+  total_numbers: number;
+  queued_count: number;
+  dialed_count: number;
+  connected_count: number;
+  failed_count: number;
+  rejected_count: number;
+  cac_rejected_count: number;
+  started_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+  workspaces?: { name: string };
+  agents?: { name: string };
+}
+
+interface BatchItem {
+  id: string;
+  phone_number: string;
+  status: string;
+  call_uuid: string | null;
+  failure_reason: string | null;
+  rejection_reason: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+}
+
+interface Workspace {
+  id: string;
+  name: string;
+}
+
+interface Agent {
+  id: string;
+  name: string;
+}
+
+function BatchCallsManager() {
+  const [runs, setRuns] = useState<BatchRun[]>([]);
+  const [selectedRun, setSelectedRun] = useState<BatchRun | null>(null);
+  const [items, setItems] = useState<BatchItem[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  
+  // Creation state
+  const [selectedWs, setSelectedWs] = useState("");
+  const [selectedAgent, setSelectedAgent] = useState("");
+  const [numbersText, setNumbersText] = useState("");
+
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [page, setPage] = useState(1);
+  const [itemPage, setItemPage] = useState(1);
+
+  const fetchCampaigns = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const headers = { Authorization: `Bearer ${session.access_token}` };
+      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+      const res = await fetch(`${apiUrl}/api/admin/batch-calls?limit=10&page=${page}`, { headers });
+      if (!res.ok) throw new Error("Failed to load campaigns.");
+      const data = await res.json();
+      setRuns(data);
+      
+      if (data.length > 0 && !selectedRun) {
+        setSelectedRun(data[0]);
+        fetchRunDetails(data[0].id);
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Failed to load campaigns.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchRunDetails = async (runId: string) => {
+    setDetailLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const headers = { Authorization: `Bearer ${session.access_token}` };
+      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+      // 1. Fetch updated run stats
+      const runRes = await fetch(`${apiUrl}/api/admin/batch-calls/${runId}`, { headers });
+      if (runRes.ok) {
+        const runData = await runRes.json();
+        setSelectedRun(runData);
+      }
+
+      // 2. Fetch paginated campaign items
+      const itemsRes = await fetch(`${apiUrl}/api/admin/batch-calls/${runId}/items?limit=50&page=${itemPage}`, { headers });
+      if (itemsRes.ok) {
+        const itemsData = await itemsRes.json();
+        setItems(itemsData);
+      }
+    } catch (e: any) {
+      toast.error("Failed to load campaign numbers details.");
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const handleStartCampaign = async () => {
+    if (!selectedWs || !selectedAgent || !numbersText.trim()) {
+      toast.error("Please fill in all campaign parameters.");
+      return;
+    }
+
+    const numbers = numbersText
+      .split(/[\n,]/)
+      .map((num) => num.trim())
+      .filter((num) => num.length >= 7);
+
+    if (numbers.length === 0) {
+      toast.error("Please input valid phone numbers.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const headers = { 
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json"
+      };
+      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+      const res = await fetch(`${apiUrl}/api/admin/batch-calls`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          workspace_id: selectedWs,
+          agent_id: selectedAgent,
+          phone_numbers: numbers
+        })
+      });
+
+      if (!res.ok) throw new Error("Failed to start dialing campaign.");
+      
+      toast.success(`Dialing campaign started with ${numbers.length} numbers.`);
+      setNumbersText("");
+      fetchCampaigns();
+    } catch (e: any) {
+      toast.error(e.message || "Error starting campaign.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleStopCampaign = async (runId: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const headers = { Authorization: `Bearer ${session.access_token}` };
+      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+      const res = await fetch(`${apiUrl}/api/admin/batch-calls/${runId}/stop`, {
+        method: "POST",
+        headers
+      });
+
+      if (!res.ok) throw new Error("Failed to stop campaign.");
+      
+      toast.success("Emergency campaign dial loop paused successfully.");
+      fetchCampaigns();
+      if (selectedRun && selectedRun.id === runId) {
+        fetchRunDetails(runId);
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Error pausing campaign.");
+    }
+  };
+
+  const fetchFormMetadata = async () => {
+    const wsRes = await supabase.from("workspaces").select("id, name");
+    if (wsRes.data) {
+      setWorkspaces(wsRes.data);
+      if (wsRes.data.length > 0) setSelectedWs(wsRes.data[0].id);
+    }
+
+    const agRes = await supabase.from("agents").select("id, name");
+    if (agRes.data) {
+      setAgents(agRes.data);
+      if (agRes.data.length > 0) setSelectedAgent(agRes.data[0].id);
+    }
+  };
+
+  useEffect(() => {
+    fetchFormMetadata();
+  }, []);
+
+  useEffect(() => {
+    fetchCampaigns();
+  }, [page]);
+
+  useEffect(() => {
+    if (selectedRun) {
+      fetchRunDetails(selectedRun.id);
+    }
+  }, [itemPage]);
+
+  return (
+    <div className="mx-auto flex max-w-7xl flex-col gap-8">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.2em] text-black/50">
+            <PhoneCall className="h-3.5 w-3.5" />
+            <span>Outbound Marketing</span>
+          </div>
+          <h1 className="text-4xl font-[340] tracking-[-0.03em] text-black">Batch Dial campaigns</h1>
+          <p className="max-w-2xl text-[14px] font-[320] leading-relaxed text-black/60">
+            Deploy bulk voice dial campaigns sequentially under Call Admission limits to avoid trunk blockages.
+          </p>
+        </div>
+        <button
+          onClick={fetchCampaigns}
+          className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-[#e6e6e6] bg-white transition hover:bg-[#f7f7f5]"
+        >
+          <RefreshCw className="h-4 w-4 text-black/60" />
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex h-[40vh] items-center justify-center">
+          <p className="font-mono text-[12px] uppercase tracking-widest text-black/40">
+            Retrieving campaign queues...
+          </p>
+        </div>
+      ) : (
+        <div className="grid gap-8 lg:grid-cols-3">
+          {/* Left: Campaign Wizard & History list */}
+          <div className="space-y-6">
+            {/* Creator Wizard */}
+            <div className="rounded-[20px] border border-[#e6e6e6] bg-white p-5 shadow-sm space-y-4">
+              <h2 className="text-[15px] font-[340] text-black border-b border-[#e6e6e6] pb-3 flex items-center gap-2">
+                <Play className="h-4 w-4 text-black/50" />
+                <span>Launch New Campaign</span>
+              </h2>
+
+              <div className="space-y-4 text-left">
+                <div>
+                  <label className="text-[11px] font-mono uppercase text-black/40 block mb-1.5">
+                    Target Workspace
+                  </label>
+                  <select
+                    value={selectedWs}
+                    onChange={(e) => setSelectedWs(e.target.value)}
+                    className="w-full h-10 px-3 rounded-[10px] border border-[#e6e6e6] bg-white text-[13px] text-black focus:outline-none"
+                  >
+                    {workspaces.map((ws) => (
+                      <option key={ws.id} value={ws.id}>
+                        {ws.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-mono uppercase text-black/40 block mb-1.5">
+                    Agent Voice Assistant
+                  </label>
+                  <select
+                    value={selectedAgent}
+                    onChange={(e) => setSelectedAgent(e.target.value)}
+                    className="w-full h-10 px-3 rounded-[10px] border border-[#e6e6e6] bg-white text-[13px] text-black focus:outline-none"
+                  >
+                    {agents.map((ag) => (
+                      <option key={ag.id} value={ag.id}>
+                        {ag.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-mono uppercase text-black/40 block mb-1.5">
+                    Target Numbers (Comma/Newline separated)
+                  </label>
+                  <textarea
+                    value={numbersText}
+                    onChange={(e) => setNumbersText(e.target.value)}
+                    placeholder="+1234567890&#10;+1987654321"
+                    rows={4}
+                    className="w-full p-3 rounded-[10px] border border-[#e6e6e6] bg-white text-[13px] text-black focus:outline-none font-mono"
+                  />
+                </div>
+
+                <button
+                  onClick={handleStartCampaign}
+                  disabled={submitting}
+                  className="w-full h-11 bg-black text-white rounded-[12px] text-[13px] font-medium transition hover:bg-black/90 disabled:opacity-60 flex items-center justify-center gap-2"
+                >
+                  {submitting ? "Deploying Campaign..." : "Start Outbound Campaign"}
+                </button>
+              </div>
+            </div>
+
+            {/* Runs list */}
+            <div className="rounded-[20px] border border-[#e6e6e6] bg-white p-5 shadow-sm space-y-4 max-h-[400px] overflow-y-auto">
+              <h2 className="text-[15px] font-[340] text-black border-b border-[#e6e6e6] pb-3 flex items-center gap-2">
+                <List className="h-4 w-4 text-black/50" />
+                <span>Campaign History</span>
+              </h2>
+
+              <div className="space-y-3">
+                {runs.map((run) => (
+                  <div
+                    key={run.id}
+                    onClick={() => {
+                      setSelectedRun(run);
+                      fetchRunDetails(run.id);
+                    }}
+                    className={`p-4 rounded-[14px] border transition cursor-pointer text-left ${
+                      selectedRun?.id === run.id
+                        ? "border-black bg-[#fcfcfb]"
+                        : "border-[#e6e6e6] bg-white hover:bg-[#fafaf9]"
+                    }`}
+                  >
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-[13px] font-bold text-black capitalize">
+                        {run.agents?.name || "AI Agent Dial"}
+                      </span>
+                      <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${
+                        run.status === "completed" 
+                          ? "bg-green-50 text-green-700" 
+                          : run.status === "running"
+                            ? "bg-blue-50 text-blue-700"
+                            : "bg-red-50 text-red-700"
+                      }`}>
+                        {run.status}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-black/50 font-mono">
+                      Queue: {run.dialed_count}/{run.total_numbers} dialed
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Right: Dialing progress details */}
+          <div className="lg:col-span-2">
+            {detailLoading || !selectedRun ? (
+              <div className="rounded-[20px] border border-[#e6e6e6] bg-white p-12 text-center shadow-sm">
+                <p className="font-mono text-[12px] text-black/40 uppercase tracking-widest">
+                  Loading Dialing progress details...
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-[20px] border border-[#e6e6e6] bg-white p-6 shadow-sm space-y-6">
+                <div className="flex justify-between items-center border-b border-[#e6e6e6] pb-4">
+                  <div>
+                    <h2 className="text-[18px] font-[340] text-black capitalize">
+                      {selectedRun.agents?.name || "Dialing Campaign"} details
+                    </h2>
+                    <p className="text-[12px] text-black/50 font-mono mt-0.5">
+                      Created on: {new Date(selectedRun.created_at).toLocaleString()}
+                    </p>
+                  </div>
+                  {selectedRun.status === "running" && (
+                    <button
+                      onClick={() => handleStopCampaign(selectedRun.id)}
+                      className="h-9 px-3.5 bg-red-50 border border-red-200 text-red-700 rounded-[8px] text-[12px] font-semibold transition hover:bg-red-100 flex items-center gap-1.5"
+                    >
+                      <Square className="h-3.5 w-3.5" />
+                      <span>Abort Campaign</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Counters Grid */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="p-3 bg-[#fcfcfb] border border-[#e6e6e6] rounded-[12px]">
+                    <span className="text-[10px] font-mono uppercase text-black/40">Total numbers</span>
+                    <p className="text-[20px] font-semibold text-black mt-0.5">{selectedRun.total_numbers}</p>
+                  </div>
+                  <div className="p-3 bg-[#fcfcfb] border border-[#e6e6e6] rounded-[12px]">
+                    <span className="text-[10px] font-mono uppercase text-black/40">Connected</span>
+                    <p className="text-[20px] font-semibold text-green-600 mt-0.5">{selectedRun.connected_count}</p>
+                  </div>
+                  <div className="p-3 bg-[#fcfcfb] border border-[#e6e6e6] rounded-[12px]">
+                    <span className="text-[10px] font-mono uppercase text-black/40">Dial failures</span>
+                    <p className="text-[20px] font-semibold text-red-500 mt-0.5">{selectedRun.failed_count}</p>
+                  </div>
+                  <div className="p-3 bg-[#fcfcfb] border border-[#e6e6e6] rounded-[12px]">
+                    <span className="text-[10px] font-mono uppercase text-black/40">CAC Rejected</span>
+                    <p className="text-[20px] font-semibold text-amber-600 mt-0.5">{selectedRun.cac_rejected_count}</p>
+                  </div>
+                </div>
+
+                {/* Numbers Status Table */}
+                <div className="space-y-4">
+                  <h3 className="text-[14px] font-[340] text-black">Dialed Numbers list</h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-[13px]">
+                      <thead>
+                        <tr className="border-b border-[#e6e6e6] text-black/40 font-mono text-[10px] uppercase">
+                          <th className="py-2">Phone Number</th>
+                          <th className="py-2">Status</th>
+                          <th className="py-2">UUID</th>
+                          <th className="py-2 text-right">Error / Reason</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.map((it) => (
+                          <tr key={it.id} className="border-b border-[#f2f2f0]">
+                            <td className="py-2.5 font-mono text-[12px] text-black">
+                              {it.phone_number}
+                            </td>
+                            <td className="py-2.5">
+                              <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${
+                                it.status === "connected"
+                                  ? "bg-green-50 text-green-700"
+                                  : it.status === "dialing"
+                                    ? "bg-blue-50 text-blue-700"
+                                    : it.status === "cac_rejected"
+                                      ? "bg-amber-50 text-amber-700"
+                                      : "bg-red-50 text-red-700"
+                              }`}>
+                                {it.status}
+                              </span>
+                            </td>
+                            <td className="py-2.5 font-mono text-[11px] text-black/50">
+                              {it.call_uuid ? it.call_uuid.substring(0, 15) + "..." : "-"}
+                            </td>
+                            <td className="py-2.5 text-right font-mono text-[11px] text-black/60">
+                              {it.rejection_reason || it.failure_reason || "-"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Pagination */}
+                  <div className="flex justify-between items-center pt-3 border-t border-[#e6e6e6]">
+                    <button
+                      disabled={itemPage <= 1}
+                      onClick={() => setItemPage(itemPage - 1)}
+                      className="px-3.5 py-1.5 rounded-[8px] border border-[#e6e6e6] text-[12px] bg-white hover:bg-[#fcfcfb] disabled:opacity-50"
+                    >
+                      Previous
+                    </button>
+                    <span className="text-[12px] text-black/60">Page {itemPage}</span>
+                    <button
+                      disabled={items.length < 50}
+                      onClick={() => setItemPage(itemPage + 1)}
+                      className="px-3.5 py-1.5 rounded-[8px] border border-[#e6e6e6] text-[12px] bg-white hover:bg-[#fcfcfb] disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

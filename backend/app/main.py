@@ -40,6 +40,7 @@ app.add_middleware(
         "https://social.getaipilot.in",
         "https://voice.getaipilot.online",
         "https://voice.getaipilot.in",
+        "https://gapvoicepilot.vercel.app",
         "http://localhost:8010",
         "http://localhost:8000",
     ],
@@ -50,10 +51,7 @@ app.add_middleware(
 )
 
 
-@app.options("/{full_path:path}")
-async def options_handler(full_path: str):
-    """Handle CORS preflight requests"""
-    return {"status": "ok"}
+
 
 
 # Include routers

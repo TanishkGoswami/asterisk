@@ -138,7 +138,9 @@ class SarvamTTSService:
             payload["speech_sample_rate"] = 16000
         elif output_audio_codec == "mulaw":
             payload["speech_sample_rate"] = 8000
-
+        
+        import time
+        start_time = time.time()
         try:
             session = await self._get_session()
             timeout = aiohttp.ClientTimeout(total=30)
@@ -153,6 +155,10 @@ class SarvamTTSService:
                     raise RuntimeError("Sarvam API returned empty audios array")
                 
                 audio_bytes = base64.b64decode(audios[0])
+                
+                latency = int((time.time() - start_time) * 1000)
+                from app.services.provider_health_service import log_provider_health_event
+                log_provider_health_event("sarvam", "tts", "success", latency_ms=latency)
 
                 if req_codec == "linear16":
                     # Strip WAV header if present to extract raw PCM bytes
@@ -178,6 +184,10 @@ class SarvamTTSService:
                 return audio_bytes
 
         except Exception as exc:
+            latency = int((time.time() - start_time) * 1000)
+            from app.services.provider_health_service import log_provider_health_event
+            status = "429_rate_limited" if "429" in str(exc) else "failure"
+            log_provider_health_event("sarvam", "tts", status, latency_ms=latency, error_code="API_ERROR", error_message=str(exc))
             logger.error("Sarvam TTS synthesis failed: %s. Falling back to Deepgram.", exc)
             return await self._fallback_synthesize(text)
 

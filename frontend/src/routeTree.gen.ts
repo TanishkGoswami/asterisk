@@ -55,11 +55,15 @@ import { Route as AuthenticatedAdminWorkspacesRouteImport } from './routes/_auth
 import { Route as AuthenticatedAdminSipTrunksRouteImport } from './routes/_authenticated/admin/sip-trunks'
 import { Route as AuthenticatedAdminSettingsRouteImport } from './routes/_authenticated/admin/settings'
 import { Route as AuthenticatedAdminQaRouteImport } from './routes/_authenticated/admin/qa'
+import { Route as AuthenticatedAdminProvidersRouteImport } from './routes/_authenticated/admin/providers'
 import { Route as AuthenticatedAdminLiveCallsRouteImport } from './routes/_authenticated/admin/live-calls'
 import { Route as AuthenticatedAdminHealthRouteImport } from './routes/_authenticated/admin/health'
 import { Route as AuthenticatedAdminDidNumbersRouteImport } from './routes/_authenticated/admin/did-numbers'
 import { Route as AuthenticatedAdminCallsRouteImport } from './routes/_authenticated/admin/calls'
+import { Route as AuthenticatedAdminCallAdmissionRouteImport } from './routes/_authenticated/admin/call-admission'
 import { Route as AuthenticatedAdminBillingRouteImport } from './routes/_authenticated/admin/billing'
+import { Route as AuthenticatedAdminBatchCallsRouteImport } from './routes/_authenticated/admin/batch-calls'
+import { Route as AuthenticatedAdminAsteriskConfigsRouteImport } from './routes/_authenticated/admin/asterisk-configs'
 import { Route as AuthenticatedAdminAgentsRouteImport } from './routes/_authenticated/admin/agents'
 import { Route as AuthenticatedDashboardAgentsIndexRouteImport } from './routes/_authenticated/dashboard/agents/index'
 import { Route as AuthenticatedDashboardSchedulesIdRouteImport } from './routes/_authenticated/dashboard/schedules.$id'
@@ -316,6 +320,12 @@ const AuthenticatedAdminQaRoute = AuthenticatedAdminQaRouteImport.update({
   path: '/qa',
   getParentRoute: () => AuthenticatedAdminRoute,
 } as any)
+const AuthenticatedAdminProvidersRoute =
+  AuthenticatedAdminProvidersRouteImport.update({
+    id: '/providers',
+    path: '/providers',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
 const AuthenticatedAdminLiveCallsRoute =
   AuthenticatedAdminLiveCallsRouteImport.update({
     id: '/live-calls',
@@ -339,10 +349,28 @@ const AuthenticatedAdminCallsRoute = AuthenticatedAdminCallsRouteImport.update({
   path: '/calls',
   getParentRoute: () => AuthenticatedAdminRoute,
 } as any)
+const AuthenticatedAdminCallAdmissionRoute =
+  AuthenticatedAdminCallAdmissionRouteImport.update({
+    id: '/call-admission',
+    path: '/call-admission',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
 const AuthenticatedAdminBillingRoute =
   AuthenticatedAdminBillingRouteImport.update({
     id: '/billing',
     path: '/billing',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
+const AuthenticatedAdminBatchCallsRoute =
+  AuthenticatedAdminBatchCallsRouteImport.update({
+    id: '/batch-calls',
+    path: '/batch-calls',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
+const AuthenticatedAdminAsteriskConfigsRoute =
+  AuthenticatedAdminAsteriskConfigsRouteImport.update({
+    id: '/asterisk-configs',
+    path: '/asterisk-configs',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
 const AuthenticatedAdminAgentsRoute =
@@ -407,11 +435,15 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AuthenticatedAdminRouteWithChildren
   '/auth/callback': typeof AuthCallbackRoute
   '/admin/agents': typeof AuthenticatedAdminAgentsRoute
+  '/admin/asterisk-configs': typeof AuthenticatedAdminAsteriskConfigsRoute
+  '/admin/batch-calls': typeof AuthenticatedAdminBatchCallsRoute
   '/admin/billing': typeof AuthenticatedAdminBillingRoute
+  '/admin/call-admission': typeof AuthenticatedAdminCallAdmissionRoute
   '/admin/calls': typeof AuthenticatedAdminCallsRoute
   '/admin/did-numbers': typeof AuthenticatedAdminDidNumbersRoute
   '/admin/health': typeof AuthenticatedAdminHealthRoute
   '/admin/live-calls': typeof AuthenticatedAdminLiveCallsRoute
+  '/admin/providers': typeof AuthenticatedAdminProvidersRoute
   '/admin/qa': typeof AuthenticatedAdminQaRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/sip-trunks': typeof AuthenticatedAdminSipTrunksRoute
@@ -464,11 +496,15 @@ export interface FileRoutesByTo {
   '/voice_sso': typeof Voice_ssoRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/admin/agents': typeof AuthenticatedAdminAgentsRoute
+  '/admin/asterisk-configs': typeof AuthenticatedAdminAsteriskConfigsRoute
+  '/admin/batch-calls': typeof AuthenticatedAdminBatchCallsRoute
   '/admin/billing': typeof AuthenticatedAdminBillingRoute
+  '/admin/call-admission': typeof AuthenticatedAdminCallAdmissionRoute
   '/admin/calls': typeof AuthenticatedAdminCallsRoute
   '/admin/did-numbers': typeof AuthenticatedAdminDidNumbersRoute
   '/admin/health': typeof AuthenticatedAdminHealthRoute
   '/admin/live-calls': typeof AuthenticatedAdminLiveCallsRoute
+  '/admin/providers': typeof AuthenticatedAdminProvidersRoute
   '/admin/qa': typeof AuthenticatedAdminQaRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/sip-trunks': typeof AuthenticatedAdminSipTrunksRoute
@@ -524,11 +560,15 @@ export interface FileRoutesById {
   '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
   '/auth/callback': typeof AuthCallbackRoute
   '/_authenticated/admin/agents': typeof AuthenticatedAdminAgentsRoute
+  '/_authenticated/admin/asterisk-configs': typeof AuthenticatedAdminAsteriskConfigsRoute
+  '/_authenticated/admin/batch-calls': typeof AuthenticatedAdminBatchCallsRoute
   '/_authenticated/admin/billing': typeof AuthenticatedAdminBillingRoute
+  '/_authenticated/admin/call-admission': typeof AuthenticatedAdminCallAdmissionRoute
   '/_authenticated/admin/calls': typeof AuthenticatedAdminCallsRoute
   '/_authenticated/admin/did-numbers': typeof AuthenticatedAdminDidNumbersRoute
   '/_authenticated/admin/health': typeof AuthenticatedAdminHealthRoute
   '/_authenticated/admin/live-calls': typeof AuthenticatedAdminLiveCallsRoute
+  '/_authenticated/admin/providers': typeof AuthenticatedAdminProvidersRoute
   '/_authenticated/admin/qa': typeof AuthenticatedAdminQaRoute
   '/_authenticated/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/_authenticated/admin/sip-trunks': typeof AuthenticatedAdminSipTrunksRoute
@@ -584,11 +624,15 @@ export interface FileRouteTypes {
     | '/admin'
     | '/auth/callback'
     | '/admin/agents'
+    | '/admin/asterisk-configs'
+    | '/admin/batch-calls'
     | '/admin/billing'
+    | '/admin/call-admission'
     | '/admin/calls'
     | '/admin/did-numbers'
     | '/admin/health'
     | '/admin/live-calls'
+    | '/admin/providers'
     | '/admin/qa'
     | '/admin/settings'
     | '/admin/sip-trunks'
@@ -641,11 +685,15 @@ export interface FileRouteTypes {
     | '/voice_sso'
     | '/auth/callback'
     | '/admin/agents'
+    | '/admin/asterisk-configs'
+    | '/admin/batch-calls'
     | '/admin/billing'
+    | '/admin/call-admission'
     | '/admin/calls'
     | '/admin/did-numbers'
     | '/admin/health'
     | '/admin/live-calls'
+    | '/admin/providers'
     | '/admin/qa'
     | '/admin/settings'
     | '/admin/sip-trunks'
@@ -700,11 +748,15 @@ export interface FileRouteTypes {
     | '/_authenticated/admin'
     | '/auth/callback'
     | '/_authenticated/admin/agents'
+    | '/_authenticated/admin/asterisk-configs'
+    | '/_authenticated/admin/batch-calls'
     | '/_authenticated/admin/billing'
+    | '/_authenticated/admin/call-admission'
     | '/_authenticated/admin/calls'
     | '/_authenticated/admin/did-numbers'
     | '/_authenticated/admin/health'
     | '/_authenticated/admin/live-calls'
+    | '/_authenticated/admin/providers'
     | '/_authenticated/admin/qa'
     | '/_authenticated/admin/settings'
     | '/_authenticated/admin/sip-trunks'
@@ -1084,6 +1136,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminQaRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
+    '/_authenticated/admin/providers': {
+      id: '/_authenticated/admin/providers'
+      path: '/providers'
+      fullPath: '/admin/providers'
+      preLoaderRoute: typeof AuthenticatedAdminProvidersRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
     '/_authenticated/admin/live-calls': {
       id: '/_authenticated/admin/live-calls'
       path: '/live-calls'
@@ -1112,11 +1171,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminCallsRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
+    '/_authenticated/admin/call-admission': {
+      id: '/_authenticated/admin/call-admission'
+      path: '/call-admission'
+      fullPath: '/admin/call-admission'
+      preLoaderRoute: typeof AuthenticatedAdminCallAdmissionRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
     '/_authenticated/admin/billing': {
       id: '/_authenticated/admin/billing'
       path: '/billing'
       fullPath: '/admin/billing'
       preLoaderRoute: typeof AuthenticatedAdminBillingRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
+    '/_authenticated/admin/batch-calls': {
+      id: '/_authenticated/admin/batch-calls'
+      path: '/batch-calls'
+      fullPath: '/admin/batch-calls'
+      preLoaderRoute: typeof AuthenticatedAdminBatchCallsRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
+    '/_authenticated/admin/asterisk-configs': {
+      id: '/_authenticated/admin/asterisk-configs'
+      path: '/asterisk-configs'
+      fullPath: '/admin/asterisk-configs'
+      preLoaderRoute: typeof AuthenticatedAdminAsteriskConfigsRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
     '/_authenticated/admin/agents': {
@@ -1166,11 +1246,15 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedAdminRouteChildren {
   AuthenticatedAdminAgentsRoute: typeof AuthenticatedAdminAgentsRoute
+  AuthenticatedAdminAsteriskConfigsRoute: typeof AuthenticatedAdminAsteriskConfigsRoute
+  AuthenticatedAdminBatchCallsRoute: typeof AuthenticatedAdminBatchCallsRoute
   AuthenticatedAdminBillingRoute: typeof AuthenticatedAdminBillingRoute
+  AuthenticatedAdminCallAdmissionRoute: typeof AuthenticatedAdminCallAdmissionRoute
   AuthenticatedAdminCallsRoute: typeof AuthenticatedAdminCallsRoute
   AuthenticatedAdminDidNumbersRoute: typeof AuthenticatedAdminDidNumbersRoute
   AuthenticatedAdminHealthRoute: typeof AuthenticatedAdminHealthRoute
   AuthenticatedAdminLiveCallsRoute: typeof AuthenticatedAdminLiveCallsRoute
+  AuthenticatedAdminProvidersRoute: typeof AuthenticatedAdminProvidersRoute
   AuthenticatedAdminQaRoute: typeof AuthenticatedAdminQaRoute
   AuthenticatedAdminSettingsRoute: typeof AuthenticatedAdminSettingsRoute
   AuthenticatedAdminSipTrunksRoute: typeof AuthenticatedAdminSipTrunksRoute
@@ -1180,11 +1264,16 @@ interface AuthenticatedAdminRouteChildren {
 
 const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
   AuthenticatedAdminAgentsRoute: AuthenticatedAdminAgentsRoute,
+  AuthenticatedAdminAsteriskConfigsRoute:
+    AuthenticatedAdminAsteriskConfigsRoute,
+  AuthenticatedAdminBatchCallsRoute: AuthenticatedAdminBatchCallsRoute,
   AuthenticatedAdminBillingRoute: AuthenticatedAdminBillingRoute,
+  AuthenticatedAdminCallAdmissionRoute: AuthenticatedAdminCallAdmissionRoute,
   AuthenticatedAdminCallsRoute: AuthenticatedAdminCallsRoute,
   AuthenticatedAdminDidNumbersRoute: AuthenticatedAdminDidNumbersRoute,
   AuthenticatedAdminHealthRoute: AuthenticatedAdminHealthRoute,
   AuthenticatedAdminLiveCallsRoute: AuthenticatedAdminLiveCallsRoute,
+  AuthenticatedAdminProvidersRoute: AuthenticatedAdminProvidersRoute,
   AuthenticatedAdminQaRoute: AuthenticatedAdminQaRoute,
   AuthenticatedAdminSettingsRoute: AuthenticatedAdminSettingsRoute,
   AuthenticatedAdminSipTrunksRoute: AuthenticatedAdminSipTrunksRoute,

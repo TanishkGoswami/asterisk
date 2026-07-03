@@ -747,26 +747,44 @@ async def asterisk_inbound(request: Request, db: Client = Depends(get_db)):
 
     # 4. Search in did_numbers table first
     did_result = await asyncio.to_thread(
-        db.table("did_numbers").select("id, workspace_id, agent_id").in_("phone_number", search_variants).eq("status", "active").execute
+        db.table("did_numbers").select("id, workspace_id, agent_id, sip_trunk_provider_id, status").in_("phone_number", search_variants).execute
     )
 
+    sip_trunk_provider_id = None
     if did_result.data and isinstance(did_result.data, list):
         phone_data = did_result.data[0]
+        if phone_data.get("status") != "active":
+            logger.error(f"[Asterisk Webhook] DID number {dialed_number} is inactive")
+            from app.services.call_admission_control import log_call_limit_event
+            log_call_limit_event(phone_data.get("workspace_id"), phone_data.get("agent_id"), phone_data.get("sip_trunk_provider_id"), phone_data.get("id"), call_uuid, "inbound", "did_inactive", caller_id, dialed_number)
+            await _create_rejected_call_record(db, call_uuid, phone_data.get("workspace_id"), phone_data.get("agent_id"), phone_data.get("id"), True, provider, caller_id, dialed_number, "did_inactive")
+            return Response(content="REJECT:did_inactive", media_type="text/plain")
+            
         workspace_id = phone_data.get("workspace_id")
         agent_id = phone_data.get("agent_id")
         phone_id = phone_data.get("id")
+        sip_trunk_provider_id = phone_data.get("sip_trunk_provider_id")
         is_did = True
     else:
         # Fallback to phone_numbers table
         phone_result = await asyncio.to_thread(
-            db.table("phone_numbers").select("id, workspace_id, agent_id").in_("phone_number", search_variants).execute
+            db.table("phone_numbers").select("id, workspace_id, agent_id, status").in_("phone_number", search_variants).execute
         )
 
         if not phone_result.data:
             logger.error(f"[Asterisk Webhook] Phone number variants {search_variants} not found in did_numbers or phone_numbers")
-            return {"status": "error", "message": "Phone number not found"}
+            from app.services.call_admission_control import log_call_limit_event
+            log_call_limit_event(None, None, None, None, call_uuid, "inbound", "did_not_found", caller_id, dialed_number)
+            return Response(content="REJECT:did_not_found", media_type="text/plain")
 
         phone_data = phone_result.data[0]
+        if phone_data.get("status") != "active":
+            logger.error(f"[Asterisk Webhook] Phone number {dialed_number} is inactive")
+            from app.services.call_admission_control import log_call_limit_event
+            log_call_limit_event(phone_data.get("workspace_id"), phone_data.get("agent_id"), None, phone_data.get("id"), call_uuid, "inbound", "did_inactive", caller_id, dialed_number)
+            await _create_rejected_call_record(db, call_uuid, phone_data.get("workspace_id"), phone_data.get("agent_id"), phone_data.get("id"), False, provider, caller_id, dialed_number, "did_inactive")
+            return Response(content="REJECT:did_inactive", media_type="text/plain")
+
         workspace_id = phone_data.get("workspace_id")
         agent_id = phone_data.get("agent_id")
         phone_id = phone_data.get("id")
@@ -774,43 +792,62 @@ async def asterisk_inbound(request: Request, db: Client = Depends(get_db)):
 
     if not agent_id:
         logger.error(f"[Asterisk Webhook] No agent assigned to phone number {dialed_number}")
-        return {"status": "error", "message": "No active agent assigned"}
+        from app.services.call_admission_control import log_call_limit_event
+        log_call_limit_event(workspace_id, None, sip_trunk_provider_id, phone_id, call_uuid, "inbound", "agent_not_found", caller_id, dialed_number)
+        await _create_rejected_call_record(db, call_uuid, workspace_id, None, phone_id, is_did, provider, caller_id, dialed_number, "agent_not_found")
+        return Response(content="REJECT:agent_not_found", media_type="text/plain")
 
-    # 5. Create call record asynchronously to respond in < 200ms
-    async def _create_call_record():
-        try:
-            import uuid
-            db_call_id = str(uuid.uuid4())
-            insert_payload = {
-                "id": db_call_id,
-                "call_uuid": call_uuid,
-                "twilio_call_sid": call_uuid,  # fallback for uniqueness
-                "workspace_id": workspace_id,
-                "agent_id": agent_id,
-                "caller_phone_number": caller_id or "unknown",
-                "caller_id": caller_id or "unknown",
-                "dialed_number": dialed_number,
-                "provider": provider,
-                "direction": "inbound",
-                "status": "created",
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "metadata": {"provider": provider, "dialed_number": dialed_number}
-            }
-            if is_did:
-                insert_payload["did_number_id"] = phone_id
-                insert_payload["phone_number_id"] = None
-            else:
-                insert_payload["phone_number_id"] = phone_id
-                insert_payload["did_number_id"] = None
+    # 5. Call Admission Control checks
+    from app.services.call_admission_control import check_and_reserve_call
+    allowed, reason = await check_and_reserve_call(
+        call_uuid=call_uuid,
+        direction="inbound",
+        workspace_id=str(workspace_id),
+        agent_id=str(agent_id),
+        sip_trunk_provider_id=str(sip_trunk_provider_id) if sip_trunk_provider_id else None,
+        did_number_id=str(phone_id) if is_did else None,
+        caller_id=caller_id,
+        dialed_number=dialed_number
+    )
 
-            db.table("calls").insert(insert_payload).execute()
-            logger.info(f"[Asterisk Webhook] Created DB call record for {call_uuid} mapping to DB id {db_call_id}")
-        except Exception as db_exc:
-            logger.error(f"[Asterisk Webhook] Failed to insert call record in DB: {db_exc}", exc_info=True)
+    if not allowed:
+        logger.warning(f"[Asterisk Webhook] Call admission control rejected inbound call {call_uuid}: {reason}")
+        await _create_rejected_call_record(db, call_uuid, workspace_id, agent_id, phone_id, is_did, provider, caller_id, dialed_number, reason or "internal_error")
+        return Response(content=f"REJECT:{reason or 'internal_error'}", media_type="text/plain")
 
-    asyncio.create_task(_create_call_record())
+    # 6. Create call record for allowed call
+    try:
+        import uuid
+        db_call_id = str(uuid.uuid4())
+        insert_payload = {
+            "id": db_call_id,
+            "call_uuid": call_uuid,
+            "twilio_call_sid": call_uuid,
+            "workspace_id": workspace_id,
+            "agent_id": agent_id,
+            "caller_phone_number": caller_id or "unknown",
+            "caller_id": caller_id or "unknown",
+            "dialed_number": dialed_number,
+            "provider": provider,
+            "direction": "inbound",
+            "status": "ringing",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "metadata": {"provider": provider, "dialed_number": dialed_number}
+        }
+        if is_did:
+            insert_payload["did_number_id"] = phone_id
+            insert_payload["phone_number_id"] = None
+            insert_payload["sip_trunk_provider_id"] = sip_trunk_provider_id
+        else:
+            insert_payload["phone_number_id"] = phone_id
+            insert_payload["did_number_id"] = None
 
-    # 6. Store call_uuid mapping in CallSessionManager
+        await asyncio.to_thread(db.table("calls").insert(insert_payload).execute)
+        logger.info(f"[Asterisk Webhook] Created DB call record for allowed call {call_uuid}")
+    except Exception as db_exc:
+        logger.error(f"[Asterisk Webhook] Failed to insert call record in DB: {db_exc}")
+
+    # 7. Store call_uuid mapping in CallSessionManager
     from app.services.call_session_manager import call_session_manager
     call_session_manager.register_inbound_asterisk_call(
         call_uuid=call_uuid,
@@ -821,6 +858,40 @@ async def asterisk_inbound(request: Request, db: Client = Depends(get_db)):
         phone_number_id=str(phone_id)
     )
 
-    logger.info(f"[Asterisk Webhook] Inbound call registered successfully for UUID {call_uuid} in <200ms")
-    return {"status": "success", "call_uuid": call_uuid}
+    logger.info(f"[Asterisk Webhook] Inbound call ALLOWED and registered for UUID {call_uuid}")
+    return Response(content="ALLOW", media_type="text/plain")
+
+
+async def _create_rejected_call_record(db, call_uuid, workspace_id, agent_id, phone_id, is_did, provider, caller_id, dialed_number, reason):
+    try:
+        import uuid
+        db_call_id = str(uuid.uuid4())
+        insert_payload = {
+            "id": db_call_id,
+            "call_uuid": call_uuid,
+            "twilio_call_sid": call_uuid,
+            "workspace_id": workspace_id,
+            "agent_id": agent_id,
+            "caller_phone_number": caller_id or "unknown",
+            "caller_id": caller_id or "unknown",
+            "dialed_number": dialed_number,
+            "provider": provider,
+            "direction": "inbound",
+            "status": "failed",
+            "rejection_reason": reason,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "ended_at": datetime.now(timezone.utc).isoformat(),
+            "metadata": {"provider": provider, "dialed_number": dialed_number, "rejection_reason": reason}
+        }
+        if is_did:
+            insert_payload["did_number_id"] = phone_id
+            insert_payload["phone_number_id"] = None
+        else:
+            insert_payload["phone_number_id"] = phone_id
+            insert_payload["did_number_id"] = None
+
+        await asyncio.to_thread(db.table("calls").insert(insert_payload).execute)
+    except Exception as e:
+        logger.error(f"[Asterisk Webhook] Failed to insert rejected call record: {e}")
+
 

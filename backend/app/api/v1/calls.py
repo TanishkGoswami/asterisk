@@ -198,6 +198,9 @@ async def end_active_call(
     db: Client = Depends(get_db),
 ):
     """Programmatically terminate an active call."""
+    from app.services.call_admission_control import release_call_reservation
+    release_call_reservation(call_id)
+
     call_result = db.table("calls").select("id, twilio_call_sid, status, provider").eq("workspace_id", workspace_id).eq("id", call_id).execute()
     if not call_result.data:
         raise HTTPException(status_code=404, detail="Call not found")
@@ -327,6 +330,42 @@ async def test_call(
                 raise HTTPException(status_code=400, detail="No active SIP Trunk provider found for Asterisk test call")
             trunk_id = trunks_res.data[0]["id"]
             
+        # Call Admission Control reservation
+        from app.services.call_admission_control import check_and_reserve_call, release_call_reservation
+        
+        call_uuid = call_id
+        
+        allowed, reason = await check_and_reserve_call(
+            call_uuid=call_uuid,
+            direction="outbound",
+            workspace_id=str(workspace_id),
+            agent_id=str(agent_id),
+            sip_trunk_provider_id=str(trunk_id),
+            did_number_id=str(did_number_id) if did_number_id else None,
+            caller_id=from_number,
+            dialed_number=to_number
+        )
+
+        if not allowed:
+            try:
+                db.table("calls").insert({
+                    "id": call_uuid,
+                    "call_uuid": call_uuid,
+                    "twilio_call_sid": call_uuid,
+                    "workspace_id": workspace_id,
+                    "agent_id": agent_id,
+                    "caller_phone_number": from_number or "unknown",
+                    "caller_id": from_number or "unknown",
+                    "dialed_number": to_number,
+                    "direction": "outbound",
+                    "status": "failed",
+                    "provider": "asterisk",
+                    "metadata": {"provider": "asterisk", "is_test": True, "rejection_reason": reason}
+                }).execute()
+            except Exception as db_err:
+                logger.error(f"[Asterisk Test Call] Failed to insert rejected call record: {db_err}")
+            raise HTTPException(status_code=403, detail=f"Call rejected by admission control: {reason or 'internal_error'}")
+
         # Register call in memory
         from app.services.call_session_manager import call_session_manager
         call_session_manager.register_inbound_asterisk_call(
@@ -351,6 +390,7 @@ async def test_call(
             "direction": "outbound",
             "status": "ringing",
             "provider": "asterisk",
+            "sip_trunk_provider_id": trunk_id,
             "metadata": {"provider": "asterisk", "is_test": True}
         }
         # Only set did_number_id if we have a real FK reference to did_numbers
@@ -361,6 +401,7 @@ async def test_call(
             logger.info(f"[Asterisk Test Call] Registered outbound call record {call_id} in DB")
         except Exception as db_err:
             logger.error(f"[Asterisk Test Call] Failed to write call record to DB: {db_err}")
+            release_call_reservation(call_id)
             raise HTTPException(status_code=500, detail=f"Database write failure: {db_err}")
             
         # Format dial number
@@ -385,135 +426,152 @@ async def test_call(
         endpoint_name = f"provider-{trunk_id}"
         caller_id = from_number or "+18166536732"
 
-        # Check if Asterisk mode is explicitly 'local'
-        if settings.asterisk_mode == "local":
-            # 1. Preemptive validation: AudioSocket listening
-            if not is_audiosocket_listening():
-                raise HTTPException(
-                    status_code=503,
-                    detail="AudioSocket server is not listening on 127.0.0.1:9092. Please make sure the local backend is running."
-                )
-                
-            # 2. Preemptive validation: PJSIP endpoint existence
-            endpoint_check = execute_asterisk_cli(f"pjsip show endpoint {endpoint_name}")
-            if endpoint_check["returncode"] != 0 or "Unable to find" in endpoint_check["stdout"] or "not found" in endpoint_check["stdout"].lower():
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"SIP Trunk Endpoint '{endpoint_name}' does not exist in Asterisk. Please check your pjsip.conf configuration."
-                )
-                
-            # 3. Execute local originate command directly (no SSH fallback, return errors)
-            originate_cmd = f"channel originate PJSIP/{dial_number}@{endpoint_name} application AudioSocket {call_id},127.0.0.1:9092 \"{caller_id}\""
-            res = execute_asterisk_cli(originate_cmd)
-            if res["returncode"] != 0:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Asterisk local originate failed (code {res['returncode']}): {res['stderr'] or res['stdout']}. Command run: {res['full_cmd']}"
-                )
-            return {"status": "calling", "call_sid": call_id, "to": to_number, "call_id": call_id}
+        originate_cmd_str = f"asterisk -rx 'channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092'"
 
-        # Non-local mode: try VPS HTTP API → SSH → manual fallback
-        import httpx
-        # Ensure dial_number has '+' if non-local mode expects it
-        if not dial_number.startswith('+'):
-            dial_number = '+' + dial_number
-        originate_cmd_str = f"asterisk -rx 'channel originate PJSIP/{dial_number}@{endpoint_name} application AudioSocket {call_id},127.0.0.1:9092 \"{caller_id}\"'"
-        
         call_originated = False
-        
-        # Strategy 1: Call the VPS backend HTTP API (most reliable from Windows dev machine)
-        vps_api_url = (settings.asterisk_vps_url or "").rstrip("/")
-        if vps_api_url:
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    vps_resp = await client.post(
-                         f"{vps_api_url}/api/calls/asterisk/outbound",
-                         json={
-                             "to_number": dial_number,
-                             "from_number": from_number or "",
-                             "workspace_id": workspace_id,
-                             "agent_id": agent_id,
-                             "call_id": call_id,
-                             "trunk_id": trunk_id,
-                         }
+
+        try:
+            # Check if Asterisk mode is explicitly 'local'
+            if settings.asterisk_mode == "local":
+                # 1. Preemptive validation: AudioSocket listening
+                if not is_audiosocket_listening():
+                    raise HTTPException(
+                        status_code=503,
+                        detail="AudioSocket server is not listening on 127.0.0.1:9092. Please make sure the local backend is running."
                     )
-                    if vps_resp.status_code == 200:
-                        call_originated = True
-                        resp_data = vps_resp.json()
-                        logger.info(f"[Asterisk Test Call] VPS HTTP API originate succeeded: {resp_data}")
-                        
-                        vps_call_uuid = resp_data.get("call_uuid")
-                        vps_db_call_id = resp_data.get("call_id")
-                        
-                        if vps_call_uuid and vps_call_uuid != call_id:
-                            logger.info(f"[Asterisk Test Call] VPS returned different call_uuid: {vps_call_uuid}. Aligning local session.")
-                            
-                            from app.services.call_session_manager import call_session_manager
-                            call_session_manager.cleanup_call(call_id)
-                            
-                            call_session_manager.register_inbound_asterisk_call(
-                                call_uuid=vps_call_uuid,
-                                caller_id=from_number,
-                                dialed_number=to_number,
-                                workspace_id=str(workspace_id),
-                                agent_id=str(agent_id),
-                                phone_number_id=str(did_number_id) if did_number_id else ""
-                            )
-                            
-                            try:
-                                db.table("calls").delete().eq("id", call_id).execute()
-                                logger.info(f"[Asterisk Test Call] Deleted duplicate local call record: {call_id}")
-                            except Exception as cleanup_err:
-                                logger.warning(f"[Asterisk Test Call] Failed to clean up duplicate local call record: {cleanup_err}")
-                                
-                            if vps_db_call_id:
-                                call_id = vps_db_call_id
-                    else:
-                        logger.warning(f"[Asterisk Test Call] VPS HTTP API returned {vps_resp.status_code}: {vps_resp.text}")
-            except Exception as http_err:
-                logger.warning(f"[Asterisk Test Call] VPS HTTP API failed: {http_err}")
+                    
+                # 2. Preemptive validation: PJSIP endpoint existence
+                endpoint_check = execute_asterisk_cli(f"pjsip show endpoint {endpoint_name}")
+                if endpoint_check["returncode"] != 0 or "Unable to find" in endpoint_check["stdout"] or "not found" in endpoint_check["stdout"].lower():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"SIP Trunk Endpoint '{endpoint_name}' does not exist in Asterisk. Please check your pjsip.conf configuration."
+                    )
+                    
+                # 3. Execute local originate command directly (no SSH fallback, return errors)
+                originate_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092"
+                res = execute_asterisk_cli(originate_cmd)
+                if res["returncode"] != 0:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Asterisk local originate failed (code {res['returncode']}): {res['stderr'] or res['stdout']}. Command run: {res['full_cmd']}"
+                    )
+                call_originated = True
 
-        # Strategy 2: SSH into VPS and run the command (preferred fallback on Windows)
-        if not call_originated:
-            ssh_host = settings.asterisk_ssh_host
-            ssh_user = settings.asterisk_ssh_user
-            ssh_key = settings.asterisk_ssh_key_path or ""
-            ssh_cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
-            if ssh_key:
-                ssh_cmd += ["-i", ssh_key]
-            ssh_cmd += [
-                f"{ssh_user}@{ssh_host}",
-                f"asterisk -rx 'channel originate PJSIP/{dial_number}@{endpoint_name} application AudioSocket {call_id},127.0.0.1:9092 \"{caller_id}\"'"
-            ]
-            try:
-                ssh_res = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=12)
-                if ssh_res.returncode == 0:
-                    call_originated = True
-                    logger.info("[Asterisk Test Call] SSH originate succeeded")
-                else:
-                    logger.warning(f"[Asterisk Test Call] SSH originate failed: {ssh_res.stderr}")
-            except Exception as ssh_err:
-                logger.warning(f"[Asterisk Test Call] SSH failed: {ssh_err}")
-
-        # Strategy 3: Run asterisk locally (only if not on Windows or as last resort local fallback)
-        if not call_originated:
-            import platform
-            if platform.system() == "Windows":
-                cmd = ["wsl", "-u", "root", "asterisk", "-rx", f"channel originate PJSIP/{dial_number}@{endpoint_name} application AudioSocket {call_id},127.0.0.1:9092 \"{caller_id}\""]
             else:
-                cmd = ["asterisk", "-rx", f"channel originate PJSIP/{dial_number}@{endpoint_name} application AudioSocket {call_id},127.0.0.1:9092 \"{caller_id}\""]
-            try:
-                res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-                if res.returncode == 0:
-                    call_originated = True
-                    logger.info("[Asterisk Test Call] Local/WSL originate succeeded")
-                else:
-                    logger.warning(f"[Asterisk Test Call] Local/WSL originate failed: {res.stderr}")
-            except (FileNotFoundError, subprocess.SubprocessError) as err:
-                logger.warning(f"[Asterisk Test Call] Local/WSL originate execution failed: {err}")
+                # Non-local mode: try VPS HTTP API → SSH → manual fallback
+                import httpx
+                # Ensure dial_number has '+' if non-local mode expects it
+                if not dial_number.startswith('+'):
+                    dial_number = '+' + dial_number
+                
+                # Strategy 1: Call the VPS backend HTTP API (most reliable from Windows dev machine)
+                vps_api_url = (settings.asterisk_vps_url or "").rstrip("/")
+                if vps_api_url:
+                    try:
+                        async with httpx.AsyncClient(timeout=10.0) as client:
+                            vps_resp = await client.post(
+                                 f"{vps_api_url}/api/calls/asterisk/outbound",
+                                 json={
+                                     "to_number": dial_number,
+                                     "from_number": from_number or "",
+                                     "workspace_id": workspace_id,
+                                     "agent_id": agent_id,
+                                     "call_id": call_id,
+                                     "trunk_id": trunk_id,
+                                 }
+                            )
+                            if vps_resp.status_code == 200:
+                                call_originated = True
+                                resp_data = vps_resp.json()
+                                logger.info(f"[Asterisk Test Call] VPS HTTP API originate succeeded: {resp_data}")
+                                
+                                vps_call_uuid = resp_data.get("call_uuid")
+                                vps_db_call_id = resp_data.get("call_id")
+                                
+                                if vps_call_uuid and vps_call_uuid != call_id:
+                                    logger.info(f"[Asterisk Test Call] VPS returned different call_uuid: {vps_call_uuid}. Aligning local session.")
+                                    
+                                    from app.services.call_session_manager import call_session_manager
+                                    call_session_manager.cleanup_call(call_id)
+                                    
+                                    call_session_manager.register_inbound_asterisk_call(
+                                        call_uuid=vps_call_uuid,
+                                        caller_id=from_number,
+                                        dialed_number=to_number,
+                                        workspace_id=str(workspace_id),
+                                        agent_id=str(agent_id),
+                                        phone_number_id=str(did_number_id) if did_number_id else ""
+                                    )
+                                    
+                                    try:
+                                        db.table("calls").delete().eq("id", call_id).execute()
+                                        logger.info(f"[Asterisk Test Call] Deleted duplicate local call record: {call_id}")
+                                    except Exception as cleanup_err:
+                                        logger.warning(f"[Asterisk Test Call] Failed to clean up duplicate local call record: {cleanup_err}")
+                                        
+                                    if vps_db_call_id:
+                                        call_id = vps_db_call_id
+                            else:
+                                logger.warning(f"[Asterisk Test Call] VPS HTTP API returned {vps_resp.status_code}: {vps_resp.text}")
+                    except Exception as http_err:
+                        logger.warning(f"[Asterisk Test Call] VPS HTTP API failed: {http_err}")
 
-        # Strategy 4: Return manual command for user to run on VPS
+                # Strategy 2: SSH into VPS and run the command (preferred fallback on Windows)
+                if not call_originated:
+                    ssh_host = settings.asterisk_ssh_host
+                    ssh_user = settings.asterisk_ssh_user
+                    ssh_key = settings.asterisk_ssh_key_path or ""
+                    ssh_cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
+                    if ssh_key:
+                        ssh_cmd += ["-i", ssh_key]
+                    ssh_cmd += [
+                        f"{ssh_user}@{ssh_host}",
+                        f"asterisk -rx 'channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092'"
+                    ]
+                    try:
+                        ssh_res = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=12)
+                        if ssh_res.returncode == 0:
+                            call_originated = True
+                            logger.info("[Asterisk Test Call] SSH originate succeeded")
+                        else:
+                            logger.warning(f"[Asterisk Test Call] SSH originate failed: {ssh_res.stderr}")
+                    except Exception as ssh_err:
+                        logger.warning(f"[Asterisk Test Call] SSH failed: {ssh_err}")
+
+                # Strategy 3: Run asterisk locally (only if not on Windows or as last resort local fallback)
+                if not call_originated:
+                    import platform
+                    if platform.system() == "Windows":
+                        cmd = ["wsl", "-u", "root", "asterisk", "-rx", f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092"]
+                    else:
+                        cmd = ["asterisk", "-rx", f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092"]
+                    try:
+                        res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                        if res.returncode == 0:
+                            call_originated = True
+                            logger.info("[Asterisk Test Call] Local/WSL originate succeeded")
+                        else:
+                            logger.warning(f"[Asterisk Test Call] Local/WSL originate failed: {res.stderr}")
+                    except (FileNotFoundError, subprocess.SubprocessError) as err:
+                        logger.warning(f"[Asterisk Test Call] Local/WSL originate execution failed: {err}")
+
+        except Exception as orig_err:
+            logger.error(f"[Asterisk Test Call] Originate execution threw exception: {orig_err}", exc_info=True)
+            release_call_reservation(call_id)
+            try:
+                db.table("calls").update({"status": "failed", "rejection_reason": str(orig_err)}).eq("id", call_id).execute()
+            except Exception:
+                pass
+            raise HTTPException(status_code=500, detail=f"Originate failed: {str(orig_err)}")
+
         if not call_originated:
+            # Rollback reservation since call won't start automatically
+            release_call_reservation(call_id)
+            try:
+                db.table("calls").update({"status": "failed", "rejection_reason": "manual_required"}).eq("id", call_id).execute()
+            except Exception:
+                pass
             border = "=" * 80
             logger.info(f"\n{border}\n[MANUAL ACTION REQUIRED] All automatic originate methods failed.\n"
                         f"Run this command directly in your VPS terminal:\n\n"
@@ -675,6 +733,50 @@ async def asterisk_outbound_call(body: Dict[str, Any], db: Client = Depends(get_
         call_uuid = str(uuid.uuid4())
         skip_db_insert = False
 
+    # Check if this call was already reserved in Redis (e.g. by test_call route)
+    already_reserved = False
+    from app.services.call_admission_control import redis_client
+    if redis_client:
+        try:
+            already_reserved = bool(redis_client.get(f"call:{call_uuid}:reservation"))
+        except Exception:
+            pass
+
+    if not already_reserved:
+        from app.services.call_admission_control import check_and_reserve_call
+        allowed, reason = await check_and_reserve_call(
+            call_uuid=call_uuid,
+            direction="outbound",
+            workspace_id=str(workspace_id),
+            agent_id=str(agent_id),
+            sip_trunk_provider_id=str(trunk_id) if trunk_id else None,
+            did_number_id=str(phone_id) if phone_id else None,
+            caller_id=from_number,
+            dialed_number=to_number
+        )
+
+        if not allowed:
+            if not skip_db_insert:
+                try:
+                    db.table("calls").insert({
+                        "id": db_call_id,
+                        "call_uuid": call_uuid,
+                        "twilio_call_sid": call_uuid,
+                        "workspace_id": workspace_id,
+                        "agent_id": agent_id,
+                        "caller_phone_number": from_number or "unknown",
+                        "caller_id": from_number or "unknown",
+                        "dialed_number": to_number,
+                        "direction": "outbound",
+                        "status": "failed",
+                        "rejection_reason": reason or "internal_error",
+                        "provider": "asterisk",
+                        "metadata": {"provider": "asterisk"}
+                    }).execute()
+                except Exception as e:
+                    logger.error(f"[Asterisk Outbound] Failed to insert rejected call record: {e}")
+            raise HTTPException(status_code=403, detail=f"Call rejected by admission control: {reason or 'internal_error'}")
+
     if not skip_db_insert:
         # Pre-register call details in CallSessionManager in-memory cache
         from app.services.call_session_manager import call_session_manager
@@ -700,6 +802,7 @@ async def asterisk_outbound_call(body: Dict[str, Any], db: Client = Depends(get_
             "direction": "outbound",
             "status": "ringing",
             "provider": "asterisk",
+            "sip_trunk_provider_id": trunk_id,
             "metadata": {"provider": "asterisk"}
         }
         if phone_id and did_res.data:
@@ -709,6 +812,8 @@ async def asterisk_outbound_call(body: Dict[str, Any], db: Client = Depends(get_
             logger.info(f"[Asterisk Outbound] Registered outbound call record {call_uuid} in DB")
         except Exception as db_err:
             logger.error(f"[Asterisk Outbound] Failed to write call record to DB: {db_err}")
+            from app.services.call_admission_control import release_call_reservation
+            release_call_reservation(call_uuid)
             raise HTTPException(status_code=500, detail=f"Database write failure: {db_err}")
 
     # Format dial number
@@ -733,52 +838,75 @@ async def asterisk_outbound_call(body: Dict[str, Any], db: Client = Depends(get_
     endpoint_name = f"provider-{trunk_id}"
     caller_id = from_number or "+18166536732"
 
-    if settings.asterisk_mode == "local":
-        # 1. AudioSocket listening validation
-        if not is_audiosocket_listening():
-            raise HTTPException(
-                status_code=503,
-                detail="AudioSocket server is not listening on 127.0.0.1:9092. Please make sure the local backend is running."
-            )
+    orig_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_uuid},127.0.0.1:9092"
+
+    call_originated = False
+
+    try:
+        if settings.asterisk_mode == "local":
+            # 1. AudioSocket listening validation
+            if not is_audiosocket_listening():
+                raise HTTPException(
+                    status_code=503,
+                    detail="AudioSocket server is not listening on 127.0.0.1:9092. Please make sure the local backend is running."
+                )
+                
+            # 2. Endpoint validation
+            endpoint_check = execute_asterisk_cli(f"pjsip show endpoint {endpoint_name}")
+            if endpoint_check["returncode"] != 0 or "Unable to find" in endpoint_check["stdout"] or "not found" in endpoint_check["stdout"].lower():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"SIP Trunk Endpoint '{endpoint_name}' does not exist in Asterisk. Please check your pjsip.conf configuration."
+                )
+                
+            # 3. Execute local originate command directly
+            res = execute_asterisk_cli(orig_cmd)
+            if res["returncode"] != 0:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Asterisk local originate failed (code {res['returncode']}): {res['stderr'] or res['stdout']}. Command run: {res['full_cmd']}"
+                )
+            call_originated = True
+        else:
+            # Non-local mode (traditional VPS / Production mode with fallback logic)
+            if not dial_number.startswith('+'):
+                dial_number = '+' + dial_number
             
-        # 2. Endpoint validation
-        endpoint_check = execute_asterisk_cli(f"pjsip show endpoint {endpoint_name}")
-        if endpoint_check["returncode"] != 0 or "Unable to find" in endpoint_check["stdout"] or "not found" in endpoint_check["stdout"].lower():
-            raise HTTPException(
-                status_code=400,
-                detail=f"SIP Trunk Endpoint '{endpoint_name}' does not exist in Asterisk. Please check your pjsip.conf configuration."
-            )
-            
-        # 3. Execute local originate command directly
-        orig_cmd = f"channel originate PJSIP/{dial_number}@{endpoint_name} application AudioSocket {call_uuid},127.0.0.1:9092 \"{caller_id}\""
-        res = execute_asterisk_cli(orig_cmd)
-        if res["returncode"] != 0:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Asterisk local originate failed (code {res['returncode']}): {res['stderr'] or res['stdout']}. Command run: {res['full_cmd']}"
-            )
-    else:
-        # Non-local mode (traditional VPS / Production mode with fallback logic)
-        if not dial_number.startswith('+'):
-            dial_number = '+' + dial_number
-        orig_cmd = f"channel originate PJSIP/{dial_number}@{endpoint_name} application AudioSocket {call_uuid},127.0.0.1:9092 \"{caller_id}\""
-        
-        # Execute using execute_asterisk_cli (which handles local/SSH configuration automatically)
-        res = execute_asterisk_cli(orig_cmd)
-        if res["returncode"] != 0:
-            # Fallback manual instructions
-            border = "=" * 80
-            originate_cmd_str = f"asterisk -rx '{orig_cmd}'"
-            logger.info(f"\n{border}\n[MANUAL ACTION REQUIRED] Outbound originate failed.\n"
-                        f"Run this command directly in your VPS terminal:\n\n"
-                        f"  {originate_cmd_str}\n{border}\n")
-            return {
-                "status": "manual_required",
-                "call_uuid": call_uuid,
-                "call_id": db_call_id,
-                "message": "Run the originate command in your VPS terminal.",
-                "command": originate_cmd_str
-            }
+            # Execute using execute_asterisk_cli (which handles local/SSH configuration automatically)
+            res = execute_asterisk_cli(orig_cmd)
+            if res["returncode"] == 0:
+                call_originated = True
+
+    except Exception as orig_err:
+        logger.error(f"[Asterisk Outbound] Originate command execution failed: {orig_err}", exc_info=True)
+        from app.services.call_admission_control import release_call_reservation
+        release_call_reservation(call_uuid)
+        try:
+            db.table("calls").update({"status": "failed", "rejection_reason": str(orig_err)}).eq("id", db_call_id).execute()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=str(orig_err))
+
+    if not call_originated:
+        from app.services.call_admission_control import release_call_reservation
+        release_call_reservation(call_uuid)
+        try:
+            db.table("calls").update({"status": "failed", "rejection_reason": "manual_required"}).eq("id", db_call_id).execute()
+        except Exception:
+            pass
+        # Fallback manual instructions
+        border = "=" * 80
+        originate_cmd_str = f"asterisk -rx '{orig_cmd}'"
+        logger.info(f"\n{border}\n[MANUAL ACTION REQUIRED] Outbound originate failed.\n"
+                    f"Run this command directly in your VPS terminal:\n\n"
+                    f"  {originate_cmd_str}\n{border}\n")
+        return {
+            "status": "manual_required",
+            "call_uuid": call_uuid,
+            "call_id": db_call_id,
+            "message": "Run the originate command in your VPS terminal.",
+            "command": originate_cmd_str
+        }
 
     return {"status": "calling", "call_uuid": call_uuid, "call_id": db_call_id}
 
@@ -863,12 +991,9 @@ async def test_local_originate(payload: Dict[str, Any]):
         except Exception:
             pass
 
-    if provider_type != "twilio":
-        if dial_number.startswith('+'):
-            if dial_number.startswith('+91'):
-                dial_number = dial_number[1:]
-            
-    orig_cmd = f"channel originate PJSIP/{dial_number}@{provider} application AudioSocket {call_uuid},127.0.0.1:9092 \"{caller}\""
+    t_id = provider.replace("provider-", "") if provider.startswith("provider-") else provider
+    orig_cmd = f"channel originate Local/{caller}*{t_id}*{dial_number}@outbound-local application AudioSocket {call_uuid},127.0.0.1:9092"
+
     
     # Execute command
     res = execute_asterisk_cli(orig_cmd)
