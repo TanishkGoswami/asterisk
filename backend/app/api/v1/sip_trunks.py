@@ -1066,5 +1066,5 @@ async def delete_did_number(workspace_id: str, id: str, db: Client = Depends(get
     if not existing.data:
         raise HTTPException(status_code=404, detail="DID number not found")
         
-    db.table("did_numbers").delete().eq("id", id).execute()
-    return {"status": "deleted"}
+    db.table("did_numbers").update({"workspace_id": None, "agent_id": None}).eq("id", id).execute()
+    return {"status": "deleted", "unassigned": True}

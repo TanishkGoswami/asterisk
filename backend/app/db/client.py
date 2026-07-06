@@ -1,15 +1,25 @@
+import threading
 from supabase import create_client, Client
-from functools import lru_cache
 from app.core.config import settings
 
-@lru_cache(maxsize=1)
+# Thread-local storage for Supabase clients to guarantee thread safety
+# when queries are run concurrently via asyncio.to_thread()
+_thread_local = threading.local()
+
 def get_supabase_client() -> Client:
-    """Singleton Supabase client — uses service role key to bypass RLS on backend"""
-    key = settings.supabase_service_role_key or settings.supabase_jwt_secret
-    return create_client(
-        settings.supabase_url,
-        key
-    )
+    """Thread-local Supabase client — uses service role key to bypass RLS on backend"""
+    if not hasattr(_thread_local, "client"):
+        key = settings.supabase_service_role_key or settings.supabase_jwt_secret
+        client = create_client(
+            settings.supabase_url,
+            key
+        )
+        # Disable HTTP/2 on PostgREST sessions to avoid RemoteProtocolErrors/ConnectionTerminated errors
+        import httpx
+        if hasattr(client, "postgrest") and hasattr(client.postgrest, "session"):
+            client.postgrest.session._transport = httpx.HTTPTransport(http2=False)
+        _thread_local.client = client
+    return _thread_local.client
 
 def get_db() -> Client:
     """Dependency for FastAPI"""

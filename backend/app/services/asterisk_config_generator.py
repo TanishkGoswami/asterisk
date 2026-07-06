@@ -50,12 +50,17 @@ class AsteriskConfigGenerator:
         if auth_type == "ip_auth":
             # IP Auth Endpoint
             pjsip_lines.extend([
+                f"[provider-{trunk_id}-aor]",
+                "type=aor",
+                f"contact=sip:{sip_proxy}{port_suffix}",
+                "",
                 f"[provider-{trunk_id}]",
                 "type=endpoint",
                 f"transport={transport_name}",
                 f"context=from-provider-{trunk_id}",
                 "disallow=all",
                 f"allow={codecs_str}",
+                f"aors=provider-{trunk_id}-aor",
                 "direct_media=no",
                 "force_rport=yes",
                 "rewrite_contact=yes",

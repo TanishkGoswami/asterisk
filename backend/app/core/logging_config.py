@@ -372,6 +372,10 @@ def setup_logging(log_level: str = "DEBUG", log_file: Optional[str] = None):
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
     
+    # Clear existing handlers to prevent duplicates during imports/reloads
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+    
     # Add handlers
     root_logger.addHandler(console_handler)
     if log_file:

@@ -32,7 +32,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { VoiceStreamClient, type LatencySummary } from "@/lib/voiceStream";
 
-export const Route = createFileRoute("/_authenticated/admin/qa")({
+export const Route = createFileRoute("/_authenticated/dashboard/qa")({
   component: AgentPlaygroundPage,
   validateSearch: (search: Record<string, unknown>) => ({
     agentId: typeof search.agentId === "string" ? search.agentId : undefined,
@@ -608,9 +608,9 @@ function AgentPlaygroundPage() {
                       const val = d.deviceId || "default";
                       return (
                         <SelectItem
-                          key={val}
-                          value={val}
-                          className="text-[13px] truncate max-w-[200px]"
+                           key={val}
+                           value={val}
+                           className="text-[13px] truncate max-w-[200px]"
                         >
                           {d.label || "Standard Mic"}
                         </SelectItem>

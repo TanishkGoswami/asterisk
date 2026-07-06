@@ -94,6 +94,7 @@ async def update_phone_number(
     body: Dict[str, Any],
     db: Client = Depends(get_db),
 ):
+    # Try public.phone_numbers first
     existing = (
         db.table("phone_numbers")
         .select("id")
@@ -101,26 +102,60 @@ async def update_phone_number(
         .eq("id", phone_number_id)
         .execute()
     )
-    if not existing.data:
-        raise HTTPException(status_code=404, detail="Phone number not found")
+    
+    if existing.data:
+        allowed_fields = {"agent_id", "friendly_name", "inbound_enabled", "outbound_enabled"}
+        update_payload = {k: v for k, v in body.items() if k in allowed_fields}
+        if not update_payload:
+            raise HTTPException(status_code=400, detail="No updatable fields provided")
+        if "agent_id" in body and not body["agent_id"]:
+            update_payload["agent_id"] = None
 
-    allowed_fields = {"agent_id", "friendly_name", "inbound_enabled", "outbound_enabled"}
-    update_payload = {k: v for k, v in body.items() if k in allowed_fields}
-    if not update_payload:
-        raise HTTPException(status_code=400, detail="No updatable fields provided")
+        result = (
+            db.table("phone_numbers")
+            .update(update_payload)
+            .eq("workspace_id", workspace_id)
+            .eq("id", phone_number_id)
+            .execute()
+        )
+        return result.data[0]
 
-    # Allow explicitly unsetting agent_id
-    if "agent_id" in body and not body["agent_id"]:
-        update_payload["agent_id"] = None
-
-    result = (
-        db.table("phone_numbers")
-        .update(update_payload)
+    # Try public.did_numbers next
+    existing_did = (
+        db.table("did_numbers")
+        .select("id")
         .eq("workspace_id", workspace_id)
         .eq("id", phone_number_id)
         .execute()
     )
-    return result.data[0]
+
+    if existing_did.data:
+        # Map fields to did_numbers schema
+        did_payload = {}
+        if "agent_id" in body:
+            did_payload["agent_id"] = body["agent_id"] or None
+        if "friendly_name" in body:
+            did_payload["label"] = body["friendly_name"] or None
+        if "inbound_enabled" in body:
+            did_payload["inbound_enabled"] = bool(body["inbound_enabled"])
+        if "outbound_enabled" in body:
+            did_payload["outbound_enabled"] = bool(body["outbound_enabled"])
+
+        result = (
+            db.table("did_numbers")
+            .update(did_payload)
+            .eq("workspace_id", workspace_id)
+            .eq("id", phone_number_id)
+            .execute()
+        )
+        updated = result.data[0]
+        return {
+            **updated,
+            "friendly_name": updated.get("label") or updated.get("phone_number"),
+            "provider_id": updated.get("id"),
+        }
+
+    raise HTTPException(status_code=404, detail="Phone number or DID not found in this workspace")
 
 
 @router.delete("/{workspace_id}/phone-numbers/{phone_number_id}")
@@ -129,6 +164,7 @@ async def delete_phone_number(
     phone_number_id: str,
     db: Client = Depends(get_db),
 ):
+    # Try public.phone_numbers first
     existing = (
         db.table("phone_numbers")
         .select("id")
@@ -136,8 +172,21 @@ async def delete_phone_number(
         .eq("id", phone_number_id)
         .execute()
     )
-    if not existing.data:
-        raise HTTPException(status_code=404, detail="Phone number not found")
+    if existing.data:
+        db.table("phone_numbers").update({"status": "deleted", "agent_id": None}).eq("id", phone_number_id).execute()
+        return {"status": "deleted"}
 
-    db.table("phone_numbers").update({"status": "deleted", "agent_id": None}).eq("id", phone_number_id).execute()
-    return {"status": "deleted"}
+    # Try public.did_numbers next. For DIDs, delete/release from workspace means unassigning.
+    existing_did = (
+        db.table("did_numbers")
+        .select("id")
+        .eq("workspace_id", workspace_id)
+        .eq("id", phone_number_id)
+        .execute()
+    )
+    if existing_did.data:
+        db.table("did_numbers").update({"workspace_id": None, "agent_id": None}).eq("id", phone_number_id).execute()
+        return {"status": "deleted", "unassigned": True}
+
+    raise HTTPException(status_code=404, detail="Phone number or DID not found in this workspace")
+

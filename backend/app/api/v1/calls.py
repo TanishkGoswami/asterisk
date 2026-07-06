@@ -5,6 +5,7 @@ from app.core.config import settings
 from app.services.telephony_service import TelephonyService
 import logging
 import subprocess
+import shlex
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -37,15 +38,25 @@ def execute_asterisk_cli(asterisk_cmd: str) -> Dict[str, Any]:
         method = "ssh"
     else:
         # Local command execution
+        import platform
         cli_base = settings.asterisk_cli_command or "asterisk"
-        # Split cli_base in case it contains spaces/arguments like "wsl -u root asterisk"
-        cmd_list = shlex.split(cli_base)
-        cmd_list += ["-rx", asterisk_cmd]
-        method = "local"
+        
+        # Check if we are running on Windows and using WSL to avoid Win32 -> WSL argument/separator/wildcard parsing bugs
+        if platform.system() == "Windows" and cli_base.strip().startswith("wsl"):
+            wsl_parts = shlex.split(cli_base)
+            if wsl_parts and wsl_parts[-1] == "asterisk":
+                wsl_parts.pop()
+            cmd_list = wsl_parts + ["bash", "-c", f"asterisk -rx {shlex.quote(asterisk_cmd)}"]
+            method = "wsl_bash"
+        else:
+            cmd_list = shlex.split(cli_base)
+            cmd_list += ["-rx", asterisk_cmd]
+            method = "local"
 
     logger.info(f"[Asterisk CLI] Executing command via {method}: {shlex.join(cmd_list)}")
     try:
-        res = subprocess.run(cmd_list, capture_output=True, text=True, timeout=12)
+        # Increased timeout to 60 seconds to accommodate slow WSL start/execution latency
+        res = subprocess.run(cmd_list, capture_output=True, text=True, timeout=60)
         logger.info(f"[Asterisk CLI] Result - Code: {res.returncode}")
         stdout_val = res.stdout or ""
         stderr_val = res.stderr or ""
@@ -260,7 +271,9 @@ async def end_active_call(
     return {"status": "terminated"}
 
 
-@router.post("/{workspace_id}/agents/{agent_id}/test-call")
+from app.utils.auth import verify_workspace_access
+
+@router.post("/{workspace_id}/agents/{agent_id}/test-call", dependencies=[Depends(verify_workspace_access)])
 async def test_call(
     workspace_id: str,
     agent_id: str,
@@ -272,6 +285,17 @@ async def test_call(
     to_number: str = body.get("to_number", "").strip()
     if not to_number:
         raise HTTPException(status_code=400, detail="to_number is required")
+        
+    # Ensure to_number starts with '+' to conform to E.164 preflight safety regex
+    if not to_number.startswith("+"):
+        to_number = "+" + to_number
+
+    dry_run = body.get("dry_run", False)
+    # Default to True if not provided, since the frontend triggers test calls via explicit button clicks
+    confirm_real_dialing = body.get("confirm_real_dialing", True)
+
+    if not dry_run and not confirm_real_dialing:
+        raise HTTPException(status_code=400, detail="real_dialing_confirmation_required")
 
     # Verify agent exists in this workspace
     agent_result = db.table("agents").select("id, name").eq("id", agent_id).eq("workspace_id", workspace_id).execute()
@@ -322,6 +346,26 @@ async def test_call(
 
     import uuid
     call_id = str(uuid.uuid4())
+
+    # Preflight safety checks (runs before CAC or reservation)
+    from app.services.outbound_safety_service import verify_outbound_dial_safety
+    safety = await verify_outbound_dial_safety(
+        workspace_id=workspace_id,
+        agent_id=agent_id,
+        phone_number=to_number,
+        call_uuid=call_id,
+        dry_run=dry_run
+    )
+    if not safety.allowed:
+        raise HTTPException(status_code=403, detail=f"Dial blocked by safety: {safety.human_readable_reason}")
+
+    if dry_run:
+        # Dry-run mode bypasses reservation/origination and returns immediately
+        return {
+            "status": "dry_run_passed",
+            "call_uuid": call_id,
+            "message": "Dry-run safety validation passed successfully. No call was placed."
+        }
 
     if use_asterisk:
         if not trunk_id:
@@ -530,7 +574,8 @@ async def test_call(
                         f"asterisk -rx 'channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092'"
                     ]
                     try:
-                        ssh_res = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=12)
+                        # Increased timeout to 60 seconds to accommodate network/routing latency
+                        ssh_res = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
                         if ssh_res.returncode == 0:
                             call_originated = True
                             logger.info("[Asterisk Test Call] SSH originate succeeded")
@@ -543,11 +588,13 @@ async def test_call(
                 if not call_originated:
                     import platform
                     if platform.system() == "Windows":
-                        cmd = ["wsl", "-u", "root", "asterisk", "-rx", f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092"]
+                        orig_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092"
+                        cmd = ["wsl", "-u", "root", "bash", "-c", f"asterisk -rx {shlex.quote(orig_cmd)}"]
                     else:
                         cmd = ["asterisk", "-rx", f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092"]
                     try:
-                        res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                        # Increased timeout to 60 seconds to accommodate slow WSL start/execution latency
+                        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
                         if res.returncode == 0:
                             call_originated = True
                             logger.info("[Asterisk Test Call] Local/WSL originate succeeded")
@@ -720,6 +767,73 @@ async def asterisk_outbound_call(body: Dict[str, Any], db: Client = Depends(get_
             raise HTTPException(status_code=400, detail=f"No active SIP Trunk provider found in workspace {workspace_id}")
         trunk_id = trunks_res.data[0]["id"]
 
+    # --- Lowest-level Hard Safety Guard ---
+    from app.services.outbound_safety_service import get_kill_switch_enabled
+    outbound_calls_enabled = get_kill_switch_enabled("OUTBOUND_CALLS_ENABLED")
+    real_dialing_enabled = get_kill_switch_enabled("REAL_DIALING_ENABLED")
+    
+    if not outbound_calls_enabled or not real_dialing_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Dial blocked: Outbound dialing globally blocked by lowest-level safety guard"
+        )
+        
+    if not provided_call_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Dial blocked: Outbound dialing requires a pre-generated call_id/call_uuid reservation"
+        )
+        
+    # Verify active reservation
+    from app.services.call_admission_control import redis_client
+    reservation_active = False
+    if settings.allow_calls_without_redis:
+        reservation_active = True
+    else:
+        if redis_client:
+            try:
+                reservation_active = bool(redis_client.get(f"call:{provided_call_id}:reservation"))
+            except Exception:
+                pass
+                
+        if not reservation_active:
+            res_db = db.table("call_reservations").select("status").eq("call_uuid", provided_call_id).eq("status", "reserved").execute()
+            if res_db.data:
+                reservation_active = True
+            
+    if not reservation_active:
+        raise HTTPException(
+            status_code=403,
+            detail="Dial blocked: No active call reservation found for this call_uuid"
+        )
+        
+    # Verify trunk status is enabled
+    trunk_db = db.table("sip_trunk_providers").select("status").eq("id", trunk_id).execute()
+    if not trunk_db.data or trunk_db.data[0].get("status") == "disabled":
+        raise HTTPException(
+            status_code=403,
+            detail="Dial blocked: SIP trunk provider is disabled"
+        )
+        
+    # Verify campaign/item states if batch call
+    batch_run_id = body.get("batch_run_id")
+    batch_item_id = body.get("batch_item_id")
+    if batch_run_id:
+        run_res = db.table("batch_call_runs").select("status").eq("id", batch_run_id).execute()
+        if not run_res.data or run_res.data[0].get("status") != "running":
+            raise HTTPException(
+                status_code=403,
+                detail="Dial blocked: Campaign run is not active/running"
+            )
+    if batch_item_id:
+        item_res = db.table("batch_call_items").select("status").eq("id", batch_item_id).execute()
+        if not item_res.data or item_res.data[0].get("status") != "dialing":
+            raise HTTPException(
+                status_code=403,
+                detail="Dial blocked: Campaign lead status is not dialing"
+            )
+    # --- End Hard Guard ---
+
     import uuid
     import os
 
@@ -879,6 +993,11 @@ async def asterisk_outbound_call(body: Dict[str, Any], db: Client = Depends(get_
 
     except Exception as orig_err:
         logger.error(f"[Asterisk Outbound] Originate command execution failed: {orig_err}", exc_info=True)
+        from app.services.outbound_safety_service import record_circuit_failure
+        record_circuit_failure("originate")
+        if "sip trunk" in str(orig_err).lower() or "endpoint" in str(orig_err).lower():
+            record_circuit_failure("trunk")
+        
         from app.services.call_admission_control import release_call_reservation
         release_call_reservation(call_uuid)
         try:
@@ -888,6 +1007,9 @@ async def asterisk_outbound_call(body: Dict[str, Any], db: Client = Depends(get_
         raise HTTPException(status_code=500, detail=str(orig_err))
 
     if not call_originated:
+        from app.services.outbound_safety_service import record_circuit_failure
+        record_circuit_failure("originate")
+        
         from app.services.call_admission_control import release_call_reservation
         release_call_reservation(call_uuid)
         try:
