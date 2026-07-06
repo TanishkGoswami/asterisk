@@ -39,6 +39,7 @@ import { Route as AuthenticatedDashboardWorkflowsRouteImport } from './routes/_a
 import { Route as AuthenticatedDashboardSipTrunksRouteImport } from './routes/_authenticated/dashboard/sip-trunks'
 import { Route as AuthenticatedDashboardSettingsRouteImport } from './routes/_authenticated/dashboard/settings'
 import { Route as AuthenticatedDashboardSchedulesRouteImport } from './routes/_authenticated/dashboard/schedules'
+import { Route as AuthenticatedDashboardQaRouteImport } from './routes/_authenticated/dashboard/qa'
 import { Route as AuthenticatedDashboardProfileRouteImport } from './routes/_authenticated/dashboard/profile'
 import { Route as AuthenticatedDashboardPhoneNumbersRouteImport } from './routes/_authenticated/dashboard/phone-numbers'
 import { Route as AuthenticatedDashboardOutboundRouteImport } from './routes/_authenticated/dashboard/outbound'
@@ -54,7 +55,6 @@ import { Route as AuthenticatedDashboardAlertingRouteImport } from './routes/_au
 import { Route as AuthenticatedAdminWorkspacesRouteImport } from './routes/_authenticated/admin/workspaces'
 import { Route as AuthenticatedAdminSipTrunksRouteImport } from './routes/_authenticated/admin/sip-trunks'
 import { Route as AuthenticatedAdminSettingsRouteImport } from './routes/_authenticated/admin/settings'
-import { Route as AuthenticatedAdminQaRouteImport } from './routes/_authenticated/admin/qa'
 import { Route as AuthenticatedAdminProvidersRouteImport } from './routes/_authenticated/admin/providers'
 import { Route as AuthenticatedAdminLiveCallsRouteImport } from './routes/_authenticated/admin/live-calls'
 import { Route as AuthenticatedAdminHealthRouteImport } from './routes/_authenticated/admin/health'
@@ -225,6 +225,12 @@ const AuthenticatedDashboardSchedulesRoute =
     path: '/dashboard/schedules',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
+const AuthenticatedDashboardQaRoute =
+  AuthenticatedDashboardQaRouteImport.update({
+    id: '/dashboard/qa',
+    path: '/dashboard/qa',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedDashboardProfileRoute =
   AuthenticatedDashboardProfileRouteImport.update({
     id: '/dashboard/profile',
@@ -315,11 +321,6 @@ const AuthenticatedAdminSettingsRoute =
     path: '/settings',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
-const AuthenticatedAdminQaRoute = AuthenticatedAdminQaRouteImport.update({
-  id: '/qa',
-  path: '/qa',
-  getParentRoute: () => AuthenticatedAdminRoute,
-} as any)
 const AuthenticatedAdminProvidersRoute =
   AuthenticatedAdminProvidersRouteImport.update({
     id: '/providers',
@@ -444,7 +445,6 @@ export interface FileRoutesByFullPath {
   '/admin/health': typeof AuthenticatedAdminHealthRoute
   '/admin/live-calls': typeof AuthenticatedAdminLiveCallsRoute
   '/admin/providers': typeof AuthenticatedAdminProvidersRoute
-  '/admin/qa': typeof AuthenticatedAdminQaRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/sip-trunks': typeof AuthenticatedAdminSipTrunksRoute
   '/admin/workspaces': typeof AuthenticatedAdminWorkspacesRoute
@@ -460,6 +460,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/outbound': typeof AuthenticatedDashboardOutboundRoute
   '/dashboard/phone-numbers': typeof AuthenticatedDashboardPhoneNumbersRoute
   '/dashboard/profile': typeof AuthenticatedDashboardProfileRoute
+  '/dashboard/qa': typeof AuthenticatedDashboardQaRoute
   '/dashboard/schedules': typeof AuthenticatedDashboardSchedulesRouteWithChildren
   '/dashboard/settings': typeof AuthenticatedDashboardSettingsRoute
   '/dashboard/sip-trunks': typeof AuthenticatedDashboardSipTrunksRoute
@@ -505,7 +506,6 @@ export interface FileRoutesByTo {
   '/admin/health': typeof AuthenticatedAdminHealthRoute
   '/admin/live-calls': typeof AuthenticatedAdminLiveCallsRoute
   '/admin/providers': typeof AuthenticatedAdminProvidersRoute
-  '/admin/qa': typeof AuthenticatedAdminQaRoute
   '/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/admin/sip-trunks': typeof AuthenticatedAdminSipTrunksRoute
   '/admin/workspaces': typeof AuthenticatedAdminWorkspacesRoute
@@ -521,6 +521,7 @@ export interface FileRoutesByTo {
   '/dashboard/outbound': typeof AuthenticatedDashboardOutboundRoute
   '/dashboard/phone-numbers': typeof AuthenticatedDashboardPhoneNumbersRoute
   '/dashboard/profile': typeof AuthenticatedDashboardProfileRoute
+  '/dashboard/qa': typeof AuthenticatedDashboardQaRoute
   '/dashboard/schedules': typeof AuthenticatedDashboardSchedulesRouteWithChildren
   '/dashboard/settings': typeof AuthenticatedDashboardSettingsRoute
   '/dashboard/sip-trunks': typeof AuthenticatedDashboardSipTrunksRoute
@@ -569,7 +570,6 @@ export interface FileRoutesById {
   '/_authenticated/admin/health': typeof AuthenticatedAdminHealthRoute
   '/_authenticated/admin/live-calls': typeof AuthenticatedAdminLiveCallsRoute
   '/_authenticated/admin/providers': typeof AuthenticatedAdminProvidersRoute
-  '/_authenticated/admin/qa': typeof AuthenticatedAdminQaRoute
   '/_authenticated/admin/settings': typeof AuthenticatedAdminSettingsRoute
   '/_authenticated/admin/sip-trunks': typeof AuthenticatedAdminSipTrunksRoute
   '/_authenticated/admin/workspaces': typeof AuthenticatedAdminWorkspacesRoute
@@ -585,6 +585,7 @@ export interface FileRoutesById {
   '/_authenticated/dashboard/outbound': typeof AuthenticatedDashboardOutboundRoute
   '/_authenticated/dashboard/phone-numbers': typeof AuthenticatedDashboardPhoneNumbersRoute
   '/_authenticated/dashboard/profile': typeof AuthenticatedDashboardProfileRoute
+  '/_authenticated/dashboard/qa': typeof AuthenticatedDashboardQaRoute
   '/_authenticated/dashboard/schedules': typeof AuthenticatedDashboardSchedulesRouteWithChildren
   '/_authenticated/dashboard/settings': typeof AuthenticatedDashboardSettingsRoute
   '/_authenticated/dashboard/sip-trunks': typeof AuthenticatedDashboardSipTrunksRoute
@@ -633,7 +634,6 @@ export interface FileRouteTypes {
     | '/admin/health'
     | '/admin/live-calls'
     | '/admin/providers'
-    | '/admin/qa'
     | '/admin/settings'
     | '/admin/sip-trunks'
     | '/admin/workspaces'
@@ -649,6 +649,7 @@ export interface FileRouteTypes {
     | '/dashboard/outbound'
     | '/dashboard/phone-numbers'
     | '/dashboard/profile'
+    | '/dashboard/qa'
     | '/dashboard/schedules'
     | '/dashboard/settings'
     | '/dashboard/sip-trunks'
@@ -694,7 +695,6 @@ export interface FileRouteTypes {
     | '/admin/health'
     | '/admin/live-calls'
     | '/admin/providers'
-    | '/admin/qa'
     | '/admin/settings'
     | '/admin/sip-trunks'
     | '/admin/workspaces'
@@ -710,6 +710,7 @@ export interface FileRouteTypes {
     | '/dashboard/outbound'
     | '/dashboard/phone-numbers'
     | '/dashboard/profile'
+    | '/dashboard/qa'
     | '/dashboard/schedules'
     | '/dashboard/settings'
     | '/dashboard/sip-trunks'
@@ -757,7 +758,6 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/health'
     | '/_authenticated/admin/live-calls'
     | '/_authenticated/admin/providers'
-    | '/_authenticated/admin/qa'
     | '/_authenticated/admin/settings'
     | '/_authenticated/admin/sip-trunks'
     | '/_authenticated/admin/workspaces'
@@ -773,6 +773,7 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard/outbound'
     | '/_authenticated/dashboard/phone-numbers'
     | '/_authenticated/dashboard/profile'
+    | '/_authenticated/dashboard/qa'
     | '/_authenticated/dashboard/schedules'
     | '/_authenticated/dashboard/settings'
     | '/_authenticated/dashboard/sip-trunks'
@@ -1024,6 +1025,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDashboardSchedulesRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/dashboard/qa': {
+      id: '/_authenticated/dashboard/qa'
+      path: '/dashboard/qa'
+      fullPath: '/dashboard/qa'
+      preLoaderRoute: typeof AuthenticatedDashboardQaRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/dashboard/profile': {
       id: '/_authenticated/dashboard/profile'
       path: '/dashboard/profile'
@@ -1127,13 +1135,6 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/admin/settings'
       preLoaderRoute: typeof AuthenticatedAdminSettingsRouteImport
-      parentRoute: typeof AuthenticatedAdminRoute
-    }
-    '/_authenticated/admin/qa': {
-      id: '/_authenticated/admin/qa'
-      path: '/qa'
-      fullPath: '/admin/qa'
-      preLoaderRoute: typeof AuthenticatedAdminQaRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
     '/_authenticated/admin/providers': {
@@ -1255,7 +1256,6 @@ interface AuthenticatedAdminRouteChildren {
   AuthenticatedAdminHealthRoute: typeof AuthenticatedAdminHealthRoute
   AuthenticatedAdminLiveCallsRoute: typeof AuthenticatedAdminLiveCallsRoute
   AuthenticatedAdminProvidersRoute: typeof AuthenticatedAdminProvidersRoute
-  AuthenticatedAdminQaRoute: typeof AuthenticatedAdminQaRoute
   AuthenticatedAdminSettingsRoute: typeof AuthenticatedAdminSettingsRoute
   AuthenticatedAdminSipTrunksRoute: typeof AuthenticatedAdminSipTrunksRoute
   AuthenticatedAdminWorkspacesRoute: typeof AuthenticatedAdminWorkspacesRoute
@@ -1274,7 +1274,6 @@ const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
   AuthenticatedAdminHealthRoute: AuthenticatedAdminHealthRoute,
   AuthenticatedAdminLiveCallsRoute: AuthenticatedAdminLiveCallsRoute,
   AuthenticatedAdminProvidersRoute: AuthenticatedAdminProvidersRoute,
-  AuthenticatedAdminQaRoute: AuthenticatedAdminQaRoute,
   AuthenticatedAdminSettingsRoute: AuthenticatedAdminSettingsRoute,
   AuthenticatedAdminSipTrunksRoute: AuthenticatedAdminSipTrunksRoute,
   AuthenticatedAdminWorkspacesRoute: AuthenticatedAdminWorkspacesRoute,
@@ -1328,6 +1327,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedDashboardOutboundRoute: typeof AuthenticatedDashboardOutboundRoute
   AuthenticatedDashboardPhoneNumbersRoute: typeof AuthenticatedDashboardPhoneNumbersRoute
   AuthenticatedDashboardProfileRoute: typeof AuthenticatedDashboardProfileRoute
+  AuthenticatedDashboardQaRoute: typeof AuthenticatedDashboardQaRoute
   AuthenticatedDashboardSchedulesRoute: typeof AuthenticatedDashboardSchedulesRouteWithChildren
   AuthenticatedDashboardSettingsRoute: typeof AuthenticatedDashboardSettingsRoute
   AuthenticatedDashboardSipTrunksRoute: typeof AuthenticatedDashboardSipTrunksRoute
@@ -1357,6 +1357,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedDashboardPhoneNumbersRoute:
     AuthenticatedDashboardPhoneNumbersRoute,
   AuthenticatedDashboardProfileRoute: AuthenticatedDashboardProfileRoute,
+  AuthenticatedDashboardQaRoute: AuthenticatedDashboardQaRoute,
   AuthenticatedDashboardSchedulesRoute:
     AuthenticatedDashboardSchedulesRouteWithChildren,
   AuthenticatedDashboardSettingsRoute: AuthenticatedDashboardSettingsRoute,

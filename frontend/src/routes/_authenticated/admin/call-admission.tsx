@@ -64,11 +64,12 @@ function CallAdmissionManager() {
       }
 
       // 3. Fetch workspaces list for reconciliation dropdown
-      const wsRes = await supabase.from("workspaces").select("id, name");
-      if (wsRes.data) {
-        setWorkspaces(wsRes.data);
-        if (wsRes.data.length > 0 && !selectedWorkspace) {
-          setSelectedWorkspace(wsRes.data[0].id);
+      const wsRes = await fetch(`${apiUrl}/api/admin/workspaces`, { headers });
+      if (wsRes.ok) {
+        const wsData = await wsRes.json();
+        setWorkspaces(wsData || []);
+        if (wsData && wsData.length > 0 && !selectedWorkspace) {
+          setSelectedWorkspace(wsData[0].id);
         }
       }
     } catch (e: any) {

@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     environment: str = "development"
     log_level: str = "INFO"
     debug: bool = False
+
+    # Telephony kill switches
+    OUTBOUND_CALLS_ENABLED: bool = False
+    BATCH_CALLS_ENABLED: bool = False
+    TWILIO_SIP_TRUNK_ENABLED: bool = False
+    REAL_DIALING_ENABLED: bool = False
     
     # Limits
     call_timeout_seconds: int = 3600  # 1 hour
