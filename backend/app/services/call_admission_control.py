@@ -2,10 +2,10 @@ import logging
 import json
 import redis
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, Dict, Any
 from app.core.config import settings
-from app.db.client import get_supabase_client
+from app.db.client import get_supabase_client, Client
 
 logger = logging.getLogger(__name__)
 
@@ -314,8 +314,32 @@ async def check_and_reserve_call(
                 },
                 "status": "reserved"
             }
-            ttl = settings.call_reservation_ttl_seconds or 7200
+            ttl = settings.call_reservation_ttl_seconds or 2700  # Default 45 mins
             redis_client.set(f"call:{call_uuid}:reservation", json.dumps(reservation_record), ex=ttl)
+            
+            # Store reservation in DB persistently
+            expires_at = (datetime.now(timezone.utc) + timedelta(seconds=ttl)).isoformat()
+            try:
+                db.table("call_reservations").insert({
+                    "call_uuid": call_uuid,
+                    "direction": direction,
+                    "workspace_id": workspace_id,
+                    "agent_id": agent_id,
+                    "sip_trunk_provider_id": sip_trunk_provider_id,
+                    "did_number_id": did_number_id,
+                    "status": "reserved",
+                    "expires_at": expires_at,
+                    "metadata": {
+                        "incremented": {
+                            "workspace": True,
+                            "agent": inc_agent,
+                            "trunk": inc_trunk
+                        }
+                    }
+                }).execute()
+            except Exception as db_err:
+                logger.error(f"[CAC] Failed to insert call reservation record in DB: {db_err}")
+
             logger.info(f"[CAC] Call reservation succeeded for {call_uuid}")
             return True, None
 
@@ -340,20 +364,37 @@ def release_call_reservation(call_uuid: str) -> bool:
     Idempotently release the concurrent call slots reserved in Redis for a call session.
     Guards against negative counters by decrementing only if previously reserved/incremented.
     """
+    db = get_supabase_client()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    
+    # Idempotency lock via database first
+    db_updated = False
+    try:
+        # Atomic database update to mark as released only if currently reserved
+        db_res = db.table("call_reservations").update({
+            "status": "released",
+            "released_at": now_iso
+        }).eq("call_uuid", call_uuid).eq("status", "reserved").execute()
+        
+        if db_res.data:
+            db_updated = True
+    except Exception as db_err:
+        logger.error(f"[CAC] Failed to update call_reservations status to released in DB: {db_err}")
+
     if not redis_client:
-        logger.warning("[CAC] Redis offline. Cannot release call reservation.")
-        return False
+        logger.warning("[CAC] Redis offline. Idempotent call reservation released in DB only.")
+        return db_updated
 
     res_key = f"call:{call_uuid}:reservation"
     try:
         r_data = redis_client.get(res_key)
         if not r_data:
-            logger.info(f"[CAC] Call release skipped for {call_uuid}: reservation not found or already released")
-            return False
+            logger.info(f"[CAC] Call release skipped for {call_uuid} in Redis: reservation not found or already released")
+            return db_updated
 
         reservation = json.loads(r_data)
         if reservation.get("status") == "released":
-            logger.info(f"[CAC] Call release skipped for {call_uuid}: already marked as released")
+            logger.info(f"[CAC] Call release skipped for {call_uuid} in Redis: already marked as released")
             return False
 
         workspace_id = reservation.get("workspace_id")
@@ -376,8 +417,9 @@ def release_call_reservation(call_uuid: str) -> bool:
             args=[decr_ws, decr_agent, decr_trunk]
         )
 
-        # Mark reservation as released and let it expire naturally or delete it
-        redis_client.delete(res_key)
+        # Mark reservation as released in Redis (keep for 60s for idempotency history)
+        reservation["status"] = "released"
+        redis_client.set(res_key, json.dumps(reservation), ex=60)
         logger.info(f"[CAC] Call reservation released successfully for {call_uuid}")
         return True
 
@@ -471,6 +513,8 @@ def get_active_reservations(workspace_id: Optional[str] = None) -> list:
             data = redis_client.get(key)
             if data:
                 res = json.loads(data)
+                if res.get("status") == "released":
+                    continue
                 if workspace_id and res.get("workspace_id") != workspace_id:
                     continue
                 res["key"] = key
@@ -483,27 +527,38 @@ def get_active_reservations(workspace_id: Optional[str] = None) -> list:
 
 def get_active_counters() -> dict:
     """Read all live active counters from Redis."""
+    default_res = {"workspace_active_calls": {}, "agent_active_calls": {}, "trunk_active_calls": {}}
     if not redis_client:
-        return {"workspace_active_calls": {}, "agent_active_calls": {}, "trunk_active_calls": {}}
+        return default_res
+    
+    try:
+        redis_client.ping()
+    except Exception as e:
+        logger.warning(f"[CAC] Redis is down or unreachable, returning empty active counters: {e}")
+        return default_res
     
     workspace_active = {}
     agent_active = {}
     trunk_active = {}
     
-    for key in redis_client.scan_iter("workspace:*:active_calls"):
-        val = redis_client.get(key)
-        w_id = key.split(":")[1]
-        workspace_active[w_id] = int(val or 0)
-        
-    for key in redis_client.scan_iter("agent:*:active_calls"):
-        val = redis_client.get(key)
-        a_id = key.split(":")[1]
-        agent_active[a_id] = int(val or 0)
-        
-    for key in redis_client.scan_iter("trunk:*:active_calls"):
-        val = redis_client.get(key)
-        t_id = key.split(":")[1]
-        trunk_active[t_id] = int(val or 0)
+    try:
+        for key in redis_client.scan_iter("workspace:*:active_calls"):
+            val = redis_client.get(key)
+            w_id = key.split(":")[1]
+            workspace_active[w_id] = int(val or 0)
+            
+        for key in redis_client.scan_iter("agent:*:active_calls"):
+            val = redis_client.get(key)
+            a_id = key.split(":")[1]
+            agent_active[a_id] = int(val or 0)
+            
+        for key in redis_client.scan_iter("trunk:*:active_calls"):
+            val = redis_client.get(key)
+            t_id = key.split(":")[1]
+            trunk_active[t_id] = int(val or 0)
+    except Exception as e:
+        logger.error(f"[CAC] Failed to read active counters from Redis: {e}")
+        return default_res
         
     return {
         "workspace_active_calls": workspace_active,
@@ -512,10 +567,71 @@ def get_active_counters() -> dict:
     }
 
 
-def reconcile_active_counters(workspace_id: Optional[str] = None) -> dict:
+async def reconcile_stale_reservations(db: Client) -> dict:
+    """
+    Finds call reservations that are expired (expires_at < now) and status = 'reserved',
+    checks if an active Asterisk channel exists for them, and if not, releases the reservation.
+    """
+    logger.info("[CAC] Starting stale reservation reconciliation...")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    
+    try:
+        expired_res = db.table("call_reservations")\
+            .select("*")\
+            .eq("status", "reserved")\
+            .lt("expires_at", now_iso)\
+            .execute()
+    except Exception as e:
+        logger.error(f"[CAC] Failed to query expired reservations from DB: {e}")
+        return {"success": False, "error": str(e)}
+
+    expired = expired_res.data or []
+    if not expired:
+        logger.info("[CAC] No stale reservations found.")
+        return {"success": True, "released_count": 0}
+
+    logger.info(f"[CAC] Found {len(expired)} stale reservations in DB. Checking Asterisk channels...")
+    
+    from app.api.v1.admin import run_safe_asterisk_cmd
+    channels_output = ""
+    try:
+        channels_output = run_safe_asterisk_cmd("core show channels")
+    except Exception as err:
+        logger.error(f"[CAC] Could not retrieve Asterisk channels for reconciliation: {err}")
+        pass
+
+    released_count = 0
+    for res in expired:
+        call_uuid = res.get("call_uuid")
+        if not call_uuid:
+            continue
+            
+        channel_exists = False
+        if channels_output and call_uuid:
+            channel_exists = call_uuid in channels_output
+
+        if not channel_exists:
+            logger.warning(f"[CAC] Reconciling stale reservation {call_uuid}: no active Asterisk channel found. Releasing...")
+            released = release_call_reservation(call_uuid)
+            if released:
+                released_count += 1
+        else:
+            logger.info(f"[CAC] Expired reservation {call_uuid} still has an active Asterisk channel. Keeping alive.")
+
+    logger.info(f"[CAC] Stale reservation reconciliation finished. Released {released_count} reservations.")
+    return {"success": True, "released_count": released_count}
+
+
+async def reconcile_active_counters(workspace_id: Optional[str] = None) -> dict:
     """Rebuild Redis active counters from unreleased reservations without blindly setting to 0."""
     if not redis_client:
         return {"success": False, "error": "Redis offline"}
+    
+    db = get_supabase_client()
+    
+    # 1. Clean up stale reservations first
+    stale_report = await reconcile_stale_reservations(db)
+    stale_released = stale_report.get("released_count", 0)
     
     all_before = get_active_counters()
     reservations = get_active_reservations(workspace_id)
@@ -566,6 +682,7 @@ def reconcile_active_counters(workspace_id: Optional[str] = None) -> dict:
                 "trunk_active_calls": after_tr
             },
             "active_reservations": len(reservations),
+            "stale_reservations_released": stale_released,
             "fixed": True
         }
     else:
@@ -614,5 +731,6 @@ def reconcile_active_counters(workspace_id: Optional[str] = None) -> dict:
                 "trunk_active_calls": fixed_trunk
             },
             "active_reservations": len(reservations),
+            "stale_reservations_released": stale_released,
             "fixed": True
         }

@@ -47,14 +47,14 @@ export function AdminSidebar() {
   const [profile, setProfile] = useState<any>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(({ data: { session } }: any) => {
       if (session?.user) {
         supabase
           .from("profiles")
           .select("*")
           .eq("id", session.user.id)
           .single()
-          .then(({ data }) => setProfile(data));
+          .then(({ data }: any) => setProfile(data));
       }
     });
   }, []);
@@ -83,7 +83,7 @@ export function AdminSidebar() {
       label: "MANAGEMENT",
       items: [
         { title: "Agents", url: "/admin/agents", icon: Bot },
-        { title: "Agent Playground", url: "/admin/qa", icon: Search },
+        { title: "Agent Playground", url: "/dashboard/qa", icon: Search },
         { title: "Call Logs", url: "/admin/calls", icon: History },
       ],
     },

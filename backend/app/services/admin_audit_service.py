@@ -79,6 +79,10 @@ async def log_admin_action(
     request: Optional[Request] = None
 ) -> None:
     """Logs administrative action to database, ensuring all payloads are sanitized of sensitive keys."""
+    if not admin_user_id:
+        logger.warning(f"[Audit Log Warning] Cannot insert audit log: admin_id is null/empty for action={action}")
+        return
+
     try:
         ip_address = None
         user_agent = None
@@ -90,16 +94,18 @@ async def log_admin_action(
         sanitized_new = sanitize_admin_payload(new_value) if new_value else {}
 
         db.table("admin_audit_logs").insert({
+            "admin_id": admin_user_id,
             "admin_user_id": admin_user_id,
             "action": action,
-            "target_type": target_type,
+            "target_type": target_type or "unknown",
             "target_id": target_id,
             "old_value": sanitized_old,
             "new_value": sanitized_new,
+            "details": sanitized_new,
             "metadata": metadata or {},
             "ip_address": ip_address,
             "user_agent": user_agent
         }).execute()
-        logger.info(f"[Audit Log] admin_user_id={admin_user_id} executed action={action} on target={target_type}:{target_id}")
+        logger.info(f"[Audit Log] admin_id={admin_user_id} executed action={action} on target={target_type}:{target_id}")
     except Exception as e:
-        logger.error(f"[Audit Log Error] Failed to log admin action: {e}", exc_info=True)
+        logger.warning(f"[Audit Log Warning] Failed to log admin action: {e}. Continuation of business logic is unaffected.")

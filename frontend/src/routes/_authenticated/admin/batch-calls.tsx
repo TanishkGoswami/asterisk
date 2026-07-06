@@ -20,6 +20,8 @@ interface BatchRun {
   failed_count: number;
   rejected_count: number;
   cac_rejected_count: number;
+  completed_count?: number;
+  retry_count?: number;
   started_at: string | null;
   ended_at: string | null;
   created_at: string;
@@ -34,6 +36,9 @@ interface BatchItem {
   call_uuid: string | null;
   failure_reason: string | null;
   rejection_reason: string | null;
+  attempt_count?: number;
+  next_attempt_at?: string | null;
+  last_cac_reason?: string | null;
   started_at: string | null;
   ended_at: string | null;
 }
@@ -59,12 +64,32 @@ function BatchCallsManager() {
   const [selectedWs, setSelectedWs] = useState("");
   const [selectedAgent, setSelectedAgent] = useState("");
   const [numbersText, setNumbersText] = useState("");
+  const [maxParallel, setMaxParallel] = useState(1);
+  const [dryRun, setDryRun] = useState(true); // Default to dry-run validation for safety!
+  const [confirmReal, setConfirmReal] = useState(false);
+  const [safetyStatus, setSafetyStatus] = useState<any>(null);
 
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [page, setPage] = useState(1);
   const [itemPage, setItemPage] = useState(1);
+
+  const fetchSafetyStatus = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const headers = { Authorization: `Bearer ${session.access_token}` };
+      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+      const res = await fetch(`${apiUrl}/api/admin/outbound-safety/status`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setSafetyStatus(data);
+      }
+    } catch (err) {
+      console.error("Error loading safety status:", err);
+    }
+  };
 
   const fetchCampaigns = async () => {
     try {
@@ -152,7 +177,10 @@ function BatchCallsManager() {
         body: JSON.stringify({
           workspace_id: selectedWs,
           agent_id: selectedAgent,
-          phone_numbers: numbers
+          phone_numbers: numbers,
+          max_parallel_calls: maxParallel,
+          dry_run: dryRun,
+          confirm_real_dialing: confirmReal
         })
       });
 
@@ -183,7 +211,32 @@ function BatchCallsManager() {
 
       if (!res.ok) throw new Error("Failed to stop campaign.");
       
-      toast.success("Emergency campaign dial loop paused successfully.");
+      toast.success("Dialing campaign stopped/cancelled.");
+      fetchCampaigns();
+      if (selectedRun && selectedRun.id === runId) {
+        fetchRunDetails(runId);
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Error stopping campaign.");
+    }
+  };
+
+  const handlePauseCampaign = async (runId: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const headers = { Authorization: `Bearer ${session.access_token}` };
+      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+      const res = await fetch(`${apiUrl}/api/admin/batch-calls/${runId}/pause`, {
+        method: "POST",
+        headers
+      });
+
+      if (!res.ok) throw new Error("Failed to pause campaign.");
+      
+      toast.success("Campaign paused successfully.");
       fetchCampaigns();
       if (selectedRun && selectedRun.id === runId) {
         fetchRunDetails(runId);
@@ -193,23 +246,92 @@ function BatchCallsManager() {
     }
   };
 
-  const fetchFormMetadata = async () => {
-    const wsRes = await supabase.from("workspaces").select("id, name");
-    if (wsRes.data) {
-      setWorkspaces(wsRes.data);
-      if (wsRes.data.length > 0) setSelectedWs(wsRes.data[0].id);
-    }
+  const handleResumeCampaign = async (runId: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
 
-    const agRes = await supabase.from("agents").select("id, name");
-    if (agRes.data) {
-      setAgents(agRes.data);
-      if (agRes.data.length > 0) setSelectedAgent(agRes.data[0].id);
+      const headers = { Authorization: `Bearer ${session.access_token}` };
+      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+      const res = await fetch(`${apiUrl}/api/admin/batch-calls/${runId}/resume`, {
+        method: "POST",
+        headers: {
+          ...headers,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          confirm_real_dialing: true
+        })
+      });
+
+      if (!res.ok) throw new Error("Failed to resume campaign.");
+      
+      toast.success("Campaign resumed successfully.");
+      fetchCampaigns();
+      if (selectedRun && selectedRun.id === runId) {
+        fetchRunDetails(runId);
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Error resuming campaign.");
+    }
+  };
+
+  const fetchFormMetadata = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const headers = { Authorization: `Bearer ${session.access_token}` };
+      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+      const wsRes = await fetch(`${apiUrl}/api/admin/workspaces`, { headers });
+      if (wsRes.ok) {
+        const wsData = await wsRes.json();
+        setWorkspaces(wsData || []);
+        if (wsData && wsData.length > 0) {
+          setSelectedWs(wsData[0].id);
+        }
+      }
+    } catch (err) {
+      console.error("Error loading workspaces metadata:", err);
     }
   };
 
   useEffect(() => {
     fetchFormMetadata();
+    fetchSafetyStatus();
   }, []);
+
+  useEffect(() => {
+    if (!selectedWs) {
+      setAgents([]);
+      return;
+    }
+
+    const fetchAgentsForWorkspace = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+        const headers = { Authorization: `Bearer ${session.access_token}` };
+        const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
+        const res = await fetch(`${apiUrl}/api/v1/workspaces/${selectedWs}/agents`, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          setAgents(data || []);
+          if (data && data.length > 0) {
+            setSelectedAgent(data[0].id);
+          } else {
+            setSelectedAgent("");
+          }
+        }
+      } catch (err) {
+        console.error("Error loading agents for workspace:", err);
+      }
+    };
+
+    fetchAgentsForWorkspace();
+  }, [selectedWs]);
 
   useEffect(() => {
     fetchCampaigns();
@@ -242,6 +364,36 @@ function BatchCallsManager() {
           <RefreshCw className="h-4 w-4 text-black/60" />
         </button>
       </div>
+
+      {/* Outbound Safety Status Banner */}
+      {safetyStatus && (
+        <div className={`p-4 rounded-[16px] border ${
+          safetyStatus.switches?.OUTBOUND_CALLS_ENABLED && safetyStatus.switches?.REAL_DIALING_ENABLED
+            ? "border-green-100 bg-green-50/50 text-green-900"
+            : "border-red-100 bg-red-50/50 text-red-900"
+        } flex items-start gap-3 text-left text-[13px]`}>
+          <AlertCircle className={`h-5 w-5 shrink-0 ${
+            safetyStatus.switches?.OUTBOUND_CALLS_ENABLED && safetyStatus.switches?.REAL_DIALING_ENABLED
+              ? "text-green-600"
+              : "text-red-600"
+          }`} />
+          <div className="flex-1 space-y-1">
+            <p className="font-medium">
+              Telephony Safety Gate: {
+                safetyStatus.switches?.OUTBOUND_CALLS_ENABLED && safetyStatus.switches?.REAL_DIALING_ENABLED
+                  ? "Operational & Protected"
+                  : "Outbound Dialing Globally Suspended"
+              }
+            </p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] opacity-75 font-mono">
+              <span>OUTBOUND_CALLS: {safetyStatus.switches?.OUTBOUND_CALLS_ENABLED ? "ENABLED" : "DISABLED"}</span>
+              <span>BATCH_CALLS: {safetyStatus.switches?.BATCH_CALLS_ENABLED ? "ENABLED" : "DISABLED"}</span>
+              <span>REAL_DIALING: {safetyStatus.switches?.REAL_DIALING_ENABLED ? "ENABLED" : "DISABLED"}</span>
+              <span>TRUNK_PROVIDER: {safetyStatus.switches?.TWILIO_SIP_TRUNK_ENABLED ? "ENABLED" : "DISABLED"}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex h-[40vh] items-center justify-center">
@@ -297,6 +449,20 @@ function BatchCallsManager() {
 
                 <div>
                   <label className="text-[11px] font-mono uppercase text-black/40 block mb-1.5">
+                    Max Parallel Calls
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={maxParallel}
+                    onChange={(e) => setMaxParallel(parseInt(e.target.value) || 1)}
+                    className="w-full h-10 px-3 rounded-[10px] border border-[#e6e6e6] bg-white text-[13px] text-black focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-mono uppercase text-black/40 block mb-1.5">
                     Target Numbers (Comma/Newline separated)
                   </label>
                   <textarea
@@ -308,12 +474,54 @@ function BatchCallsManager() {
                   />
                 </div>
 
+                {/* Dry Run / Real Dialing Safety Controls */}
+                <div className="p-3.5 rounded-[12px] border border-[#e6e6e6] bg-[#fcfcfb] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col text-left">
+                      <span className="text-[12px] font-medium text-black">Dry Run Validation</span>
+                      <span className="text-[10px] text-black/50">Verify safety rules without dialing</span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={dryRun}
+                      onChange={(e) => {
+                        setDryRun(e.target.checked);
+                        if (e.target.checked) setConfirmReal(false);
+                      }}
+                      className="h-4 w-4 rounded border-gray-300 text-black focus:ring-black"
+                    />
+                  </div>
+
+                  {!dryRun && (
+                    <div className="space-y-3 pt-2 border-t border-[#e6e6e6]">
+                      <div className="flex items-start gap-2 text-left bg-amber-50/50 border border-amber-100 p-2.5 rounded-[8px] text-[11px] text-amber-800">
+                        <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                        <p>
+                          <strong>Real Dialing Mode Active:</strong> This campaign will place live outbound calls via Twilio. Telephony charges will apply.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 text-left">
+                        <input
+                          type="checkbox"
+                          checked={confirmReal}
+                          onChange={(e) => setConfirmReal(e.target.checked)}
+                          id="confirm-real-checkbox"
+                          className="h-4 w-4 rounded border-gray-300 text-black focus:ring-black"
+                        />
+                        <label htmlFor="confirm-real-checkbox" className="text-[11px] text-black/70 cursor-pointer select-none">
+                          I confirm I want to initiate real calls.
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <button
                   onClick={handleStartCampaign}
-                  disabled={submitting}
+                  disabled={submitting || (!dryRun && !confirmReal)}
                   className="w-full h-11 bg-black text-white rounded-[12px] text-[13px] font-medium transition hover:bg-black/90 disabled:opacity-60 flex items-center justify-center gap-2"
                 >
-                  {submitting ? "Deploying Campaign..." : "Start Outbound Campaign"}
+                  {submitting ? "Deploying Campaign..." : dryRun ? "Start Dry-Run Campaign" : "Start Live Campaign"}
                 </button>
               </div>
             </div>
@@ -348,7 +556,11 @@ function BatchCallsManager() {
                           ? "bg-green-50 text-green-700" 
                           : run.status === "running"
                             ? "bg-blue-50 text-blue-700"
-                            : "bg-red-50 text-red-700"
+                            : run.status === "paused"
+                              ? "bg-amber-50 text-amber-700"
+                              : run.status === "cancelled" || run.status === "stopped"
+                                ? "bg-gray-100 text-gray-700"
+                                : "bg-red-50 text-red-700"
                       }`}>
                         {run.status}
                       </span>
@@ -381,34 +593,66 @@ function BatchCallsManager() {
                       Created on: {new Date(selectedRun.created_at).toLocaleString()}
                     </p>
                   </div>
-                  {selectedRun.status === "running" && (
-                    <button
-                      onClick={() => handleStopCampaign(selectedRun.id)}
-                      className="h-9 px-3.5 bg-red-50 border border-red-200 text-red-700 rounded-[8px] text-[12px] font-semibold transition hover:bg-red-100 flex items-center gap-1.5"
-                    >
-                      <Square className="h-3.5 w-3.5" />
-                      <span>Abort Campaign</span>
-                    </button>
-                  )}
+                  <div className="flex gap-2">
+                    {selectedRun.status === "running" && (
+                      <>
+                        <button
+                          onClick={() => handlePauseCampaign(selectedRun.id)}
+                          className="h-9 px-3.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-[8px] text-[12px] font-semibold transition hover:bg-amber-100 flex items-center gap-1.5"
+                        >
+                          <span>Pause</span>
+                        </button>
+                        <button
+                          onClick={() => handleStopCampaign(selectedRun.id)}
+                          className="h-9 px-3.5 bg-red-50 border border-red-200 text-red-700 rounded-[8px] text-[12px] font-semibold transition hover:bg-red-100 flex items-center gap-1.5"
+                        >
+                          <Square className="h-3.5 w-3.5" />
+                          <span>Abort</span>
+                        </button>
+                      </>
+                    )}
+                    {selectedRun.status === "paused" && (
+                      <>
+                        <button
+                          onClick={() => handleResumeCampaign(selectedRun.id)}
+                          className="h-9 px-3.5 bg-green-50 border border-green-200 text-green-700 rounded-[8px] text-[12px] font-semibold transition hover:bg-green-100 flex items-center gap-1.5"
+                        >
+                          <Play className="h-3.5 w-3.5" />
+                          <span>Resume</span>
+                        </button>
+                        <button
+                          onClick={() => handleStopCampaign(selectedRun.id)}
+                          className="h-9 px-3.5 bg-red-50 border border-red-200 text-red-700 rounded-[8px] text-[12px] font-semibold transition hover:bg-red-100 flex items-center gap-1.5"
+                        >
+                          <Square className="h-3.5 w-3.5" />
+                          <span>Abort</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
 
                 {/* Counters Grid */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                   <div className="p-3 bg-[#fcfcfb] border border-[#e6e6e6] rounded-[12px]">
                     <span className="text-[10px] font-mono uppercase text-black/40">Total numbers</span>
                     <p className="text-[20px] font-semibold text-black mt-0.5">{selectedRun.total_numbers}</p>
                   </div>
                   <div className="p-3 bg-[#fcfcfb] border border-[#e6e6e6] rounded-[12px]">
-                    <span className="text-[10px] font-mono uppercase text-black/40">Connected</span>
-                    <p className="text-[20px] font-semibold text-green-600 mt-0.5">{selectedRun.connected_count}</p>
+                    <span className="text-[10px] font-mono uppercase text-black/40">Completed</span>
+                    <p className="text-[20px] font-semibold text-green-600 mt-0.5">{selectedRun.completed_count ?? selectedRun.connected_count}</p>
                   </div>
                   <div className="p-3 bg-[#fcfcfb] border border-[#e6e6e6] rounded-[12px]">
-                    <span className="text-[10px] font-mono uppercase text-black/40">Dial failures</span>
+                    <span className="text-[10px] font-mono uppercase text-black/40">Retry Later</span>
+                    <p className="text-[20px] font-semibold text-purple-600 mt-0.5">{selectedRun.retry_count ?? 0}</p>
+                  </div>
+                  <div className="p-3 bg-[#fcfcfb] border border-[#e6e6e6] rounded-[12px]">
+                    <span className="text-[10px] font-mono uppercase text-black/40">Failed</span>
                     <p className="text-[20px] font-semibold text-red-500 mt-0.5">{selectedRun.failed_count}</p>
                   </div>
                   <div className="p-3 bg-[#fcfcfb] border border-[#e6e6e6] rounded-[12px]">
-                    <span className="text-[10px] font-mono uppercase text-black/40">CAC Rejected</span>
-                    <p className="text-[20px] font-semibold text-amber-600 mt-0.5">{selectedRun.cac_rejected_count}</p>
+                    <span className="text-[10px] font-mono uppercase text-black/40">CAC/Invalid</span>
+                    <p className="text-[20px] font-semibold text-amber-600 mt-0.5">{(selectedRun.cac_rejected_count || 0) + (selectedRun.rejected_count || 0)}</p>
                   </div>
                 </div>
 
@@ -422,6 +666,8 @@ function BatchCallsManager() {
                           <th className="py-2">Phone Number</th>
                           <th className="py-2">Status</th>
                           <th className="py-2">UUID</th>
+                          <th className="py-2">Attempts</th>
+                          <th className="py-2">Next Dial</th>
                           <th className="py-2 text-right">Error / Reason</th>
                         </tr>
                       </thead>
@@ -433,13 +679,19 @@ function BatchCallsManager() {
                             </td>
                             <td className="py-2.5">
                               <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${
-                                it.status === "connected"
+                                it.status === "completed"
                                   ? "bg-green-50 text-green-700"
-                                  : it.status === "dialing"
+                                  : it.status === "dialing" || it.status === "connected"
                                     ? "bg-blue-50 text-blue-700"
-                                    : it.status === "cac_rejected"
-                                      ? "bg-amber-50 text-amber-700"
-                                      : "bg-red-50 text-red-700"
+                                    : it.status === "retry_later"
+                                      ? "bg-purple-50 text-purple-700"
+                                      : it.status === "cac_rejected"
+                                        ? "bg-amber-50 text-amber-700"
+                                        : it.status === "invalid_number"
+                                          ? "bg-gray-100 text-gray-700"
+                                          : it.status === "cancelled"
+                                            ? "bg-gray-50 text-gray-500"
+                                            : "bg-red-50 text-red-700"
                               }`}>
                                 {it.status}
                               </span>
@@ -447,8 +699,14 @@ function BatchCallsManager() {
                             <td className="py-2.5 font-mono text-[11px] text-black/50">
                               {it.call_uuid ? it.call_uuid.substring(0, 15) + "..." : "-"}
                             </td>
+                            <td className="py-2.5 font-mono text-[11px] text-black/50">
+                              {it.attempt_count ?? 0}
+                            </td>
+                            <td className="py-2.5 font-mono text-[11px] text-black/50">
+                              {it.next_attempt_at ? new Date(it.next_attempt_at).toLocaleTimeString() : "-"}
+                            </td>
                             <td className="py-2.5 text-right font-mono text-[11px] text-black/60">
-                              {it.rejection_reason || it.failure_reason || "-"}
+                              {it.last_cac_reason || it.rejection_reason || it.failure_reason || "-"}
                             </td>
                           </tr>
                         ))}

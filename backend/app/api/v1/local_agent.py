@@ -75,6 +75,11 @@ async def test_local_agent(
 
         # Persistence (if workspace and agent IDs provided)
         if workspace_id and agent_id:
+            # Enforce agent workspace ownership
+            agent_check = db.table("agents").select("id").eq("id", agent_id).eq("workspace_id", workspace_id).execute()
+            if not agent_check.data:
+                raise HTTPException(status_code=403, detail="Agent does not belong to this workspace")
+
             try:
                 # Create or reuse session
                 if not session_id:
