@@ -28,6 +28,13 @@ def poll_and_dispatch(use_celery: bool = True):
     If use_celery=True, dispatches to Celery workers.
     If use_celery=False, executes immediately in the current thread (useful for dev/no-redis).
     """
+    # Periodically clean up any stale call sessions that never connected to AudioSocket
+    try:
+        from app.services.call_session_manager import call_session_manager
+        call_session_manager.cleanup_stale_calls(timeout_seconds=120)
+    except Exception as e:
+        logger.error(f"[Scheduler] Failed to clean up stale calls: {e}")
+
     db = get_supabase_client()
     now_obj = datetime.now(timezone.utc)
     now_iso = now_obj.isoformat()
