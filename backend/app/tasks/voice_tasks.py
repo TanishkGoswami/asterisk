@@ -65,7 +65,305 @@ def run_voice_call(task_id: str, payload: Dict[str, Any], attempt: int = 1):
         if not to_number:
             raise ValueError("Recipient phone number ('to') missing in payload")
 
-        # 2. Setup Telephony
+        # Determine if we should use Asterisk for this call
+        did_res = db.table("did_numbers").select("id, phone_number, provider, sip_trunk_provider_id").eq("agent_id", agent_id).eq("status", "active").execute()
+        
+        use_asterisk = False
+        from_number = None
+        did_number_id = None
+        trunk_id = None
+        
+        if did_res.data:
+            for did in did_res.data:
+                if did.get("provider") == "asterisk":
+                    use_asterisk = True
+                    from_number = did.get("phone_number")
+                    did_number_id = did.get("id")
+                    trunk_id = did.get("sip_trunk_provider_id")
+                    break
+
+        if not use_asterisk:
+            has_telephony = False
+            try:
+                if settings.telephony_provider == "telnyx":
+                    has_telephony = bool(settings.telnyx_api_key and settings.telnyx_account_sid)
+                else:
+                    has_telephony = bool(settings.twilio_account_sid and settings.twilio_auth_token)
+            except Exception:
+                pass
+                
+            if not has_telephony and settings.asterisk_audiosocket_enabled:
+                trunks_res = db.table("sip_trunk_providers").select("id").eq("workspace_id", workspace_id).execute()
+                if trunks_res.data:
+                    use_asterisk = True
+                    trunk_id = trunks_res.data[0]["id"]
+                    if did_res.data:
+                        from_number = did_res.data[0].get("phone_number")
+                        did_number_id = did_res.data[0].get("id")
+                    else:
+                        phone_res = db.table("phone_numbers").select("id, phone_number").eq("agent_id", agent_id).eq("status", "active").execute()
+                        if phone_res.data:
+                            from_number = phone_res.data[0].get("phone_number")
+
+        import uuid
+        call_id = str(uuid.uuid4())
+
+        if use_asterisk:
+            if not trunk_id:
+                trunks_res = db.table("sip_trunk_providers").select("id").eq("workspace_id", workspace_id).execute()
+                if not trunks_res.data:
+                    raise ValueError(f"No active SIP Trunk provider found for Asterisk outbound call (agent {agent_id})")
+                trunk_id = trunks_res.data[0]["id"]
+
+            # Run CAC reservation synchronously
+            from app.services.call_admission_control import check_and_reserve_call, release_call_reservation
+            from app.services.call_session_manager import call_session_manager
+
+            # Helper to run async in sync
+            def run_async(coro):
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                if loop.is_running():
+                    from concurrent.futures import ThreadPoolExecutor
+                    with ThreadPoolExecutor() as executor:
+                        return executor.submit(lambda: asyncio.run(coro)).result()
+                else:
+                    return loop.run_until_complete(coro)
+
+            allowed, reason = run_async(check_and_reserve_call(
+                call_uuid=call_id,
+                direction="outbound",
+                workspace_id=str(workspace_id),
+                agent_id=str(agent_id),
+                sip_trunk_provider_id=str(trunk_id),
+                did_number_id=str(did_number_id) if did_number_id else None,
+                caller_id=from_number,
+                dialed_number=to_number
+            ))
+
+            if not allowed:
+                # Insert failed call record
+                try:
+                    db.table("calls").insert({
+                        "id": call_id,
+                        "call_uuid": call_id,
+                        "twilio_call_sid": call_id,
+                        "workspace_id": workspace_id,
+                        "agent_id": agent_id,
+                        "caller_phone_number": from_number or "unknown",
+                        "caller_id": from_number or "unknown",
+                        "dialed_number": to_number,
+                        "direction": "outbound",
+                        "status": "failed",
+                        "provider": "asterisk",
+                        "metadata": {"provider": "asterisk", "is_scheduled": True, "rejection_reason": reason}
+                    }).execute()
+                except Exception as db_err:
+                    logger.error(f"Failed to insert rejected call record: {db_err}")
+                raise ValueError(f"Call rejected by admission control: {reason or 'internal_error'}")
+
+            # Register call in memory
+            call_session_manager.register_inbound_asterisk_call(
+                call_uuid=call_id,
+                caller_id=from_number,
+                dialed_number=to_number,
+                workspace_id=str(workspace_id),
+                agent_id=str(agent_id),
+                phone_number_id=str(did_number_id) if did_number_id else ""
+            )
+
+            # Insert ringing call record
+            call_record = {
+                "id": call_id,
+                "call_uuid": call_id,
+                "twilio_call_sid": call_id,
+                "workspace_id": workspace_id,
+                "agent_id": agent_id,
+                "caller_phone_number": from_number or "unknown",
+                "caller_id": from_number or "unknown",
+                "dialed_number": to_number,
+                "direction": "outbound",
+                "status": "ringing",
+                "provider": "asterisk",
+                "sip_trunk_provider_id": trunk_id,
+                "metadata": {"provider": "asterisk", "is_scheduled": True}
+            }
+            if did_number_id:
+                call_record["did_number_id"] = did_number_id
+            
+            try:
+                db.table("calls").insert(call_record).execute()
+            except Exception as db_err:
+                logger.error(f"Failed to write call record to DB: {db_err}")
+                release_call_reservation(call_id)
+                raise
+
+            # Format dial number
+            dial_number = to_number.strip()
+            try:
+                trunk_res = db.table("sip_trunk_providers").select("provider_type").eq("id", trunk_id).execute()
+                provider_type = trunk_res.data[0]["provider_type"] if trunk_res.data else "custom"
+            except Exception:
+                provider_type = "custom"
+
+            if provider_type != "twilio":
+                if dial_number.startswith('+'):
+                    if dial_number.startswith('+91'):
+                        dial_number = dial_number[1:]
+
+            if not dial_number.startswith('+'):
+                dial_number = '+' + dial_number
+
+            endpoint_name = f"provider-{trunk_id}"
+            caller_id = from_number or "+18166536732"
+
+            # Prepare originate command execution functions
+            from app.api.v1.calls import execute_asterisk_cli, is_audiosocket_listening
+
+            call_originated = False
+            originate_error = None
+
+            try:
+                if settings.asterisk_mode == "local":
+                    if not is_audiosocket_listening():
+                        raise ValueError("AudioSocket server is not listening on 127.0.0.1:9092")
+
+                    endpoint_check = execute_asterisk_cli(f"pjsip show endpoint {endpoint_name}")
+                    if endpoint_check["returncode"] != 0 or "Unable to find" in endpoint_check["stdout"] or "not found" in endpoint_check["stdout"].lower():
+                        raise ValueError(f"SIP Trunk Endpoint '{endpoint_name}' does not exist in Asterisk")
+
+                    orig_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092"
+                    res = execute_asterisk_cli(orig_cmd)
+                    if res["returncode"] != 0:
+                        raise ValueError(f"Asterisk local originate failed (code {res['returncode']}): {res['stderr'] or res['stdout']}")
+                    call_originated = True
+                else:
+                    # Strategy 1: VPS HTTP API
+                    vps_api_url = (settings.asterisk_vps_url or "").rstrip("/")
+                    if vps_api_url:
+                        try:
+                            import httpx
+                            vps_resp = httpx.post(
+                                f"{vps_api_url}/api/calls/asterisk/outbound",
+                                json={
+                                    "to_number": dial_number,
+                                    "from_number": from_number or "",
+                                    "workspace_id": workspace_id,
+                                    "agent_id": agent_id,
+                                    "call_id": call_id,
+                                    "trunk_id": trunk_id,
+                                },
+                                timeout=10.0
+                            )
+                            if vps_resp.status_code == 200:
+                                call_originated = True
+                                resp_data = vps_resp.json()
+                                vps_call_uuid = resp_data.get("call_uuid")
+                                if vps_call_uuid and vps_call_uuid != call_id:
+                                    call_session_manager.cleanup_call(call_id)
+                                    call_session_manager.register_inbound_asterisk_call(
+                                        call_uuid=vps_call_uuid,
+                                        caller_id=from_number,
+                                        dialed_number=to_number,
+                                        workspace_id=str(workspace_id),
+                                        agent_id=str(agent_id),
+                                        phone_number_id=str(did_number_id) if did_number_id else ""
+                                    )
+                                    try:
+                                        db.table("calls").delete().eq("id", call_id).execute()
+                                    except Exception:
+                                        pass
+                                    call_id = vps_call_uuid
+                            else:
+                                logger.warning(f"VPS HTTP API returned {vps_resp.status_code}: {vps_resp.text}")
+                        except Exception as e:
+                            logger.warning(f"VPS HTTP API failed: {e}")
+
+                    # Strategy 2: SSH fallback
+                    if not call_originated:
+                        ssh_host = settings.asterisk_ssh_host
+                        ssh_user = settings.asterisk_ssh_user
+                        ssh_key = settings.asterisk_ssh_key_path or ""
+                        ssh_cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
+                        if ssh_key:
+                            ssh_cmd += ["-i", ssh_key]
+                        ssh_cmd += [
+                            f"{ssh_user}@{ssh_host}",
+                            f"asterisk -rx 'channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092'"
+                        ]
+                        try:
+                            import subprocess
+                            ssh_res = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=60)
+                            if ssh_res.returncode == 0:
+                                call_originated = True
+                            else:
+                                logger.warning(f"SSH originate failed: {ssh_res.stderr}")
+                        except Exception as e:
+                            logger.warning(f"SSH failed: {e}")
+
+                    # Strategy 3: Local fallback
+                    if not call_originated:
+                        import platform
+                        import shlex
+                        orig_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092"
+                        if platform.system() == "Windows":
+                            cmd = ["wsl", "-u", "root", "bash", "-c", f"asterisk -rx {shlex.quote(orig_cmd)}"]
+                        else:
+                            cmd = ["asterisk", "-rx", f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092"]
+                        try:
+                            res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                            if res.returncode == 0:
+                                call_originated = True
+                            else:
+                                logger.warning(f"Local fallback originate failed: {res.stderr}")
+                        except Exception as e:
+                            logger.warning(f"Local fallback originate failed: {e}")
+
+            except Exception as e:
+                originate_error = e
+
+            if not call_originated:
+                release_call_reservation(call_id)
+                try:
+                    db.table("calls").update({"status": "failed", "rejection_reason": str(originate_error or "originate_failed")}).eq("id", call_id).execute()
+                except Exception:
+                    pass
+                raise originate_error or ValueError("Outbound originate failed for all strategies")
+
+            # Log task success
+            duration = int((time.time() - start_time) * 1000)
+            try:
+                db.table("scheduled_task_logs").insert({
+                    "scheduled_task_id": task_id,
+                    "status": "success",
+                    "attempt_number": attempt,
+                    "duration_ms": duration,
+                    "finished_at": datetime.now(dt_timezone.utc).isoformat(),
+                    "result": {"call_sid": call_id, "provider": "asterisk"}
+                }).execute()
+            except Exception as e:
+                logger.warning(f"Could not insert success log: {e}")
+
+            try:
+                db.table("notifications").insert({
+                    "user_id": task["user_id"],
+                    "workspace_id": workspace_id,
+                    "title": "Task Executed",
+                    "message": f"Scheduled Asterisk call '{task['title']}' was triggered successfully.",
+                    "type": "task_completed"
+                }).execute()
+            except Exception as e:
+                logger.warning(f"Could not insert notification: {e}")
+
+            _handle_task_completion(db, task_id, True)
+            return True
+
+        # 2. Setup Telephony (fallback for Twilio/Telnyx)
         telephony = _get_telephony()
 
         if settings.public_base_url:

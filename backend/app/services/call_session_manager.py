@@ -231,7 +231,22 @@ class CallSessionManager:
         return True
 
     def register_cleanup_callback(self, call_uuid: str, callback: Callable[[str], None]) -> None:
-        self.cleanup_callbacks[call_uuid] = callback
+        existing = self.cleanup_callbacks.get(call_uuid)
+        if existing:
+            def chained_callback(uuid):
+                try:
+                    existing(uuid)
+                except Exception as e:
+                    logger.error(f"[CallSessionManager] Error in existing callback for {uuid}: {e}")
+                try:
+                    callback(uuid)
+                except Exception as e:
+                    logger.error(f"[CallSessionManager] Error in chained callback for {uuid}: {e}")
+            self.cleanup_callbacks[call_uuid] = chained_callback
+            logger.info(f"[CallSessionManager] Chained new cleanup callback for call {call_uuid}")
+        else:
+            self.cleanup_callbacks[call_uuid] = callback
+            logger.info(f"[CallSessionManager] Registered cleanup callback for call {call_uuid}")
 
     def cleanup_call(self, call_uuid: str) -> None:
         logger.info(f"[CallSessionManager] Cleaning up call {call_uuid}")
@@ -243,5 +258,28 @@ class CallSessionManager:
                 logger.error(f"[CallSessionManager] Error during cleanup callback for {call_uuid}: {e}")
         self.active_calls.pop(call_uuid, None)
         logger.info(f"[CallSessionManager] Cleaned up in-memory call context for {call_uuid}")
+
+    def cleanup_stale_calls(self, timeout_seconds: int = 120) -> None:
+        """Finds calls in 'created' status that have exceeded the timeout, and cleans them up."""
+        now = datetime.now(timezone.utc)
+        stale_uuids = []
+        for call_uuid, context in list(self.active_calls.items()):
+            if context.get("status") == "created":
+                created_at_str = context.get("created_at")
+                if created_at_str:
+                    try:
+                        # Handle potential timezone offsets
+                        created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+                        elapsed = (now - created_at).total_seconds()
+                        if elapsed > timeout_seconds:
+                            stale_uuids.append(call_uuid)
+                    except Exception as e:
+                        logger.error(f"[CallSessionManager] Error parsing created_at for {call_uuid}: {e}")
+        
+        for call_uuid in stale_uuids:
+            logger.warning(f"[CallSessionManager] Call {call_uuid} was registered but never connected to AudioSocket. Cleaning up as stale (no answer).")
+            # We treat this as a no_answer/failed call
+            self.end_call(call_uuid, "NOANSWER")
+            self.cleanup_call(call_uuid)
 
 call_session_manager = CallSessionManager()

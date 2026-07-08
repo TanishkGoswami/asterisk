@@ -229,6 +229,13 @@ async def process_batch_run_queue(batch_run_id: str):
     
     try:
         while True:
+            # Clean up stale/stuck call sessions to prevent stuck pacing locks
+            try:
+                from app.services.call_session_manager import call_session_manager
+                call_session_manager.cleanup_stale_calls(timeout_seconds=120)
+            except Exception as stale_err:
+                logger.error(f"[Batch Campaign] Error cleaning up stale calls: {stale_err}")
+
             # 1. Fetch live status of campaign run
             run_res = db.table("batch_call_runs").select("*").eq("id", batch_run_id).execute()
             if not run_res.data:
@@ -248,9 +255,45 @@ async def process_batch_run_queue(batch_run_id: str):
                 }).eq("batch_run_id", batch_run_id).in_("status", ["queued", "retry_later"]).execute()
                 break
 
-            # 2. Count active calls for this run
-            active_res = db.table("batch_call_items").select("id", count="exact").eq("batch_run_id", batch_run_id).in_("status", ["dialing", "connected"]).execute()
-            active_calls = active_res.count if active_res.count is not None else 0
+            # 2. Count active calls for this run and clean up stuck database records
+            active_res = db.table("batch_call_items").select("id, status, started_at, call_uuid").eq("batch_run_id", batch_run_id).in_("status", ["dialing", "connected"]).execute()
+            active_items = active_res.data or []
+            
+            from app.services.call_session_manager import call_session_manager
+            active_calls = 0
+            
+            for item in active_items:
+                c_uuid = item.get("call_uuid")
+                if c_uuid and c_uuid in call_session_manager.active_calls:
+                    active_calls += 1
+                else:
+                    # Not in memory: check if it has been stuck in DB for more than 120 seconds
+                    started_at_str = item.get("started_at")
+                    is_stuck = False
+                    if started_at_str:
+                        try:
+                            started_at = datetime.fromisoformat(started_at_str.replace("Z", "+00:00"))
+                            elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
+                            if elapsed > 120:
+                                is_stuck = True
+                        except Exception:
+                            is_stuck = True
+                    else:
+                        is_stuck = True
+                        
+                    if is_stuck:
+                        logger.warning(f"[Batch Campaign] Found stuck DB item {item['id']} (call_uuid={c_uuid}) not in memory. Marking as failed.")
+                        try:
+                            db.table("batch_call_items").update({
+                                "status": "failed",
+                                "failure_reason": "stuck_db_cleanup",
+                                "ended_at": datetime.now(timezone.utc).isoformat()
+                            }).eq("id", item["id"]).execute()
+                        except Exception as update_err:
+                            logger.error(f"[Batch Campaign] Failed to clear stuck DB item {item['id']}: {update_err}")
+                    else:
+                        # Dialing or starting, but not in memory yet (pacing window)
+                        active_calls += 1
             
             max_parallel = run.get("max_parallel_calls") or 1
             if active_calls >= max_parallel:
@@ -330,7 +373,7 @@ async def dial_batch_item(db: Client, run: dict, item_id: str, attempt_idx: int)
     
     # Create unique call UUID
     import uuid
-    call_uuid = f"batch-{uuid.uuid4()}"
+    call_uuid = str(uuid.uuid4())
     
     # Set item call_uuid
     db.table("batch_call_items").update({
@@ -483,19 +526,45 @@ async def dial_batch_item(db: Client, run: dict, item_id: str, attempt_idx: int)
             if phone_res.data:
                 from_number = phone_res.data[0].get("phone_number")
 
-        from app.api.v1.calls import asterisk_outbound_call
-        dial_res = await asterisk_outbound_call(
-            body={
-                "call_id": call_uuid,
-                "workspace_id": workspace_id,
-                "agent_id": agent_id,
-                "to_number": phone_number,
-                "from_number": from_number,
-                "batch_run_id": batch_run_id,
-                "batch_item_id": item_id
-            },
-            db=db
-        )
+        from app.core.config import settings
+        import httpx
+        
+        vps_api_url = (settings.asterisk_vps_url or "").rstrip("/")
+        dial_res = None
+        
+        dial_payload = {
+            "call_id": call_uuid,
+            "workspace_id": workspace_id,
+            "agent_id": agent_id,
+            "to_number": phone_number,
+            "from_number": from_number,
+            "batch_run_id": batch_run_id,
+            "batch_item_id": item_id
+        }
+        
+        if vps_api_url:
+            logger.info(f"[Batch Campaign] Routing dial request to VPS API: {vps_api_url}")
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    vps_resp = await client.post(
+                        f"{vps_api_url}/api/calls/asterisk/outbound",
+                        json=dial_payload
+                    )
+                    if vps_resp.status_code == 200:
+                        dial_res = vps_resp.json()
+                        logger.info(f"[Batch Campaign] VPS API dial response: {dial_res}")
+                    else:
+                        logger.error(f"[Batch Campaign] VPS API returned error {vps_resp.status_code}: {vps_resp.text}")
+            except Exception as e:
+                logger.error(f"[Batch Campaign] Failed to call VPS API: {e}")
+                
+        if dial_res is None:
+            logger.info("[Batch Campaign] Executing asterisk_outbound_call locally")
+            from app.api.v1.calls import asterisk_outbound_call
+            dial_res = await asterisk_outbound_call(
+                body=dial_payload,
+                db=db
+            )
         
         dial_success = isinstance(dial_res, dict) and dial_res.get("status") == "calling"
         
