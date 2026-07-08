@@ -841,7 +841,8 @@ async def asterisk_outbound_call(body: Dict[str, Any], db: Client = Depends(get_
     if provided_call_id:
         call_uuid = provided_call_id
         db_call_id = provided_call_id
-        skip_db_insert = True  # caller already inserted the record
+        # Only skip DB insert if the caller is not a batch campaign (which does not pre-insert records)
+        skip_db_insert = not bool(body.get("batch_run_id"))
     else:
         db_call_id = str(uuid.uuid4())
         call_uuid = str(uuid.uuid4())

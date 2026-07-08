@@ -269,6 +269,32 @@ async def check_and_reserve_call(
             logger.critical("[CAC] Redis is offline. Performing fallback check.")
             if settings.allow_calls_without_redis:
                 logger.warning(f"[CAC] Redis Offline - {direction.capitalize()} call allowed due to ALLOW_CALLS_WITHOUT_REDIS=True")
+                
+                # Insert reservation record in database persistently so the VPS API can validate it
+                ttl = settings.call_reservation_ttl_seconds or 2700
+                expires_at = (datetime.now(timezone.utc) + timedelta(seconds=ttl)).isoformat()
+                try:
+                    db.table("call_reservations").insert({
+                        "call_uuid": call_uuid,
+                        "direction": direction,
+                        "workspace_id": workspace_id,
+                        "agent_id": agent_id,
+                        "sip_trunk_provider_id": sip_trunk_provider_id,
+                        "did_number_id": did_number_id,
+                        "status": "reserved",
+                        "expires_at": expires_at,
+                        "metadata": {
+                            "incremented": {
+                                "workspace": False,
+                                "agent": False,
+                                "trunk": False
+                            },
+                            "redis_offline": True
+                        }
+                    }).execute()
+                except Exception as db_err:
+                    logger.error(f"[CAC] Failed to insert offline call_reservation in DB: {db_err}")
+                    
                 return True, None
             else:
                 log_call_limit_event(workspace_id, agent_id, sip_trunk_provider_id, did_number_id, call_uuid, direction, "internal_error", caller_id, dialed_number, destination_number, {"detail": "Redis Offline"})
@@ -347,6 +373,33 @@ async def check_and_reserve_call(
             logger.error(f"[CAC] Redis transaction error: {redis_err}")
             if settings.allow_calls_without_redis:
                 logger.warning(f"[CAC] Redis unavailable - {direction.capitalize()} call allowed due to ALLOW_CALLS_WITHOUT_REDIS=True")
+                
+                # Insert reservation record in database persistently so the VPS API can validate it
+                ttl = settings.call_reservation_ttl_seconds or 2700
+                expires_at = (datetime.now(timezone.utc) + timedelta(seconds=ttl)).isoformat()
+                try:
+                    db.table("call_reservations").insert({
+                        "call_uuid": call_uuid,
+                        "direction": direction,
+                        "workspace_id": workspace_id,
+                        "agent_id": agent_id,
+                        "sip_trunk_provider_id": sip_trunk_provider_id,
+                        "did_number_id": did_number_id,
+                        "status": "reserved",
+                        "expires_at": expires_at,
+                        "metadata": {
+                            "incremented": {
+                                "workspace": False,
+                                "agent": False,
+                                "trunk": False
+                            },
+                            "redis_offline_error": True,
+                            "error_detail": str(redis_err)
+                        }
+                    }).execute()
+                except Exception as db_err:
+                    logger.error(f"[CAC] Failed to insert offline call_reservation in DB: {db_err}")
+                    
                 return True, None
             else:
                 log_call_limit_event(workspace_id, agent_id, sip_trunk_provider_id, did_number_id, call_uuid, direction, "internal_error", caller_id, dialed_number, destination_number, {"detail": "Redis transaction failed"})
