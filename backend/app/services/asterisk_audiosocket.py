@@ -470,54 +470,6 @@ class AsteriskVoiceSession:
         print("🔥 CALL USING NEW AUDIO PIPELINE v3 🔥")
         logger.info("🔥 CALL USING NEW AUDIO PIPELINE v3 🔥")
 
-        # --- HARD DEBUG: Play standalone local WAV tone bypass ---
-        try:
-            import math
-            import struct
-            import wave
-            
-            duration_s = 10.0
-            freq_hz = 440.0
-            sample_rate = 8000
-            num_samples = int(sample_rate * duration_s)
-            amplitude = 16000
-            pcm_samples = bytearray()
-            for i in range(num_samples):
-                sample = int(amplitude * math.sin(2 * math.pi * freq_hz * i / sample_rate))
-                pcm_samples.extend(struct.pack('<h', sample))
-            
-            with wave.open("test_hard_audio.wav", "wb") as wav_file:
-                wav_file.setnchannels(1)
-                wav_file.setsampwidth(2)
-                wav_file.setframerate(sample_rate)
-                wav_file.writeframes(bytes(pcm_samples))
-                
-            with wave.open("test_hard_audio.wav", "rb") as wav_file:
-                pcm_8k = wav_file.readframes(num_samples)
-                
-            pcm_bytes = len(pcm_8k)
-            logger.info("Playing local test audio (10 seconds sine wave). If this breaks, the issue is AudioSocket or Asterisk.")
-            
-            offset = 0
-            while offset < pcm_bytes and not self.barge_in_event.is_set():
-                chunk = pcm_8k[offset:offset+320]
-                offset += 320
-                
-                packet = bytes([0x10]) + len(chunk).to_bytes(2, "big") + chunk
-                self.writer.write(packet)
-                await self.writer.drain()
-                await asyncio.sleep(0.02)
-                
-            logger.info("Local test audio playback complete.")
-        except Exception as bypass_err:
-            logger.error(f"Error in hard audio bypass: {bypass_err}")
-            
-        self.set_state('idle')
-        if is_greeting:
-            self.greeting_active = False
-            self.greeting_protected = False
-        return
-
         pipeline_start = time.time()
         pipeline_type = 'greeting' if is_greeting else 'response'
         logger.info(f'[Pipeline] STARTED {pipeline_type.upper()} for call {self.call_uuid}')
@@ -606,11 +558,9 @@ class AsteriskVoiceSession:
 
         try:
             import re
-            import time
 
             # Queues
             import re
-            import time
             full_response = ''
             first_token_logged = False
             llm_first_token_time = None
