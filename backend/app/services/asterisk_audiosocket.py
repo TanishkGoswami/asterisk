@@ -467,9 +467,6 @@ class AsteriskVoiceSession:
         """
         Processes the AI pipeline: LLM stream -> TTS -> PCM resample -> AudioSocket.
         """
-        print("🔥 CALL USING NEW AUDIO PIPELINE v3 🔥")
-        logger.info("🔥 CALL USING NEW AUDIO PIPELINE v3 🔥")
-
         pipeline_start = time.time()
         pipeline_type = 'greeting' if is_greeting else 'response'
         logger.info(f'[Pipeline] STARTED {pipeline_type.upper()} for call {self.call_uuid}')
@@ -558,9 +555,11 @@ class AsteriskVoiceSession:
 
         try:
             import re
+            import time
 
             # Queues
             import re
+            import time
             full_response = ''
             first_token_logged = False
             llm_first_token_time = None
@@ -1356,5 +1355,3 @@ def get_audiosocket_stats() -> dict:
             "active_connections": list(_audiosocket_server.active_connections.keys())
         }
     return {"status": "stopped"}
-
-print("🔥 NEW AUDIO PIPELINE LOADED v3 FULL DEBUG 🔥")
