@@ -125,7 +125,20 @@ async def get_call(workspace_id: str, call_id: str, db: Client = Depends(get_db)
     messages_result = db.table("call_messages").select("*").eq("call_id", call_id).order("sequence_number").execute()
     call_data = call_result.data[0]
     call_data["transcript"] = messages_result.data
+    
+    # Fetch detailed call usage breakdown if exists
+    try:
+        usage_result = db.table("call_usage").select("*").eq("call_id", call_id).execute()
+        if usage_result.data:
+            call_data["usage"] = usage_result.data[0]
+        else:
+            call_data["usage"] = None
+    except Exception as e:
+        logger.warning(f"Failed to fetch call_usage for call {call_id}: {e}")
+        call_data["usage"] = None
+        
     return call_data
+
 
 
 def end_asterisk_call(call_id: str) -> bool:

@@ -48,7 +48,6 @@ import { Route as AuthenticatedDashboardKnowledgeBaseRouteImport } from './route
 import { Route as AuthenticatedDashboardIntegrationsRouteImport } from './routes/_authenticated/dashboard/integrations'
 import { Route as AuthenticatedDashboardDidNumbersRouteImport } from './routes/_authenticated/dashboard/did-numbers'
 import { Route as AuthenticatedDashboardChatHistoryRouteImport } from './routes/_authenticated/dashboard/chat-history'
-import { Route as AuthenticatedDashboardCallsRouteImport } from './routes/_authenticated/dashboard/calls'
 import { Route as AuthenticatedDashboardBillingRouteImport } from './routes/_authenticated/dashboard/billing'
 import { Route as AuthenticatedDashboardBatchCallRouteImport } from './routes/_authenticated/dashboard/batch-call'
 import { Route as AuthenticatedDashboardAnalyticsRouteImport } from './routes/_authenticated/dashboard/analytics'
@@ -66,6 +65,7 @@ import { Route as AuthenticatedAdminBillingRouteImport } from './routes/_authent
 import { Route as AuthenticatedAdminBatchCallsRouteImport } from './routes/_authenticated/admin/batch-calls'
 import { Route as AuthenticatedAdminAsteriskConfigsRouteImport } from './routes/_authenticated/admin/asterisk-configs'
 import { Route as AuthenticatedAdminAgentsRouteImport } from './routes/_authenticated/admin/agents'
+import { Route as AuthenticatedDashboardCallsIndexRouteImport } from './routes/_authenticated/dashboard/calls/index'
 import { Route as AuthenticatedDashboardAgentsIndexRouteImport } from './routes/_authenticated/dashboard/agents/index'
 import { Route as AuthenticatedDashboardSchedulesIdRouteImport } from './routes/_authenticated/dashboard/schedules.$id'
 import { Route as AuthenticatedDashboardCallsCallIdRouteImport } from './routes/_authenticated/dashboard/calls/$callId'
@@ -280,12 +280,6 @@ const AuthenticatedDashboardChatHistoryRoute =
     path: '/dashboard/chat-history',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
-const AuthenticatedDashboardCallsRoute =
-  AuthenticatedDashboardCallsRouteImport.update({
-    id: '/dashboard/calls',
-    path: '/dashboard/calls',
-    getParentRoute: () => AuthenticatedRoute,
-  } as any)
 const AuthenticatedDashboardBillingRoute =
   AuthenticatedDashboardBillingRouteImport.update({
     id: '/dashboard/billing',
@@ -387,6 +381,12 @@ const AuthenticatedAdminAgentsRoute =
     path: '/agents',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
+const AuthenticatedDashboardCallsIndexRoute =
+  AuthenticatedDashboardCallsIndexRouteImport.update({
+    id: '/dashboard/calls/',
+    path: '/dashboard/calls/',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedDashboardAgentsIndexRoute =
   AuthenticatedDashboardAgentsIndexRouteImport.update({
     id: '/dashboard/agents/',
@@ -401,9 +401,9 @@ const AuthenticatedDashboardSchedulesIdRoute =
   } as any)
 const AuthenticatedDashboardCallsCallIdRoute =
   AuthenticatedDashboardCallsCallIdRouteImport.update({
-    id: '/$callId',
-    path: '/$callId',
-    getParentRoute: () => AuthenticatedDashboardCallsRoute,
+    id: '/dashboard/calls/$callId',
+    path: '/dashboard/calls/$callId',
+    getParentRoute: () => AuthenticatedRoute,
   } as any)
 const AuthenticatedDashboardAgentsSetupRoute =
   AuthenticatedDashboardAgentsSetupRouteImport.update({
@@ -459,7 +459,6 @@ export interface FileRoutesByFullPath {
   '/dashboard/analytics': typeof AuthenticatedDashboardAnalyticsRoute
   '/dashboard/batch-call': typeof AuthenticatedDashboardBatchCallRoute
   '/dashboard/billing': typeof AuthenticatedDashboardBillingRoute
-  '/dashboard/calls': typeof AuthenticatedDashboardCallsRouteWithChildren
   '/dashboard/chat-history': typeof AuthenticatedDashboardChatHistoryRoute
   '/dashboard/did-numbers': typeof AuthenticatedDashboardDidNumbersRoute
   '/dashboard/integrations': typeof AuthenticatedDashboardIntegrationsRoute
@@ -480,6 +479,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/calls/$callId': typeof AuthenticatedDashboardCallsCallIdRoute
   '/dashboard/schedules/$id': typeof AuthenticatedDashboardSchedulesIdRoute
   '/dashboard/agents/': typeof AuthenticatedDashboardAgentsIndexRoute
+  '/dashboard/calls/': typeof AuthenticatedDashboardCallsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -521,7 +521,6 @@ export interface FileRoutesByTo {
   '/dashboard/analytics': typeof AuthenticatedDashboardAnalyticsRoute
   '/dashboard/batch-call': typeof AuthenticatedDashboardBatchCallRoute
   '/dashboard/billing': typeof AuthenticatedDashboardBillingRoute
-  '/dashboard/calls': typeof AuthenticatedDashboardCallsRouteWithChildren
   '/dashboard/chat-history': typeof AuthenticatedDashboardChatHistoryRoute
   '/dashboard/did-numbers': typeof AuthenticatedDashboardDidNumbersRoute
   '/dashboard/integrations': typeof AuthenticatedDashboardIntegrationsRoute
@@ -542,6 +541,7 @@ export interface FileRoutesByTo {
   '/dashboard/calls/$callId': typeof AuthenticatedDashboardCallsCallIdRoute
   '/dashboard/schedules/$id': typeof AuthenticatedDashboardSchedulesIdRoute
   '/dashboard/agents': typeof AuthenticatedDashboardAgentsIndexRoute
+  '/dashboard/calls': typeof AuthenticatedDashboardCallsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -586,7 +586,6 @@ export interface FileRoutesById {
   '/_authenticated/dashboard/analytics': typeof AuthenticatedDashboardAnalyticsRoute
   '/_authenticated/dashboard/batch-call': typeof AuthenticatedDashboardBatchCallRoute
   '/_authenticated/dashboard/billing': typeof AuthenticatedDashboardBillingRoute
-  '/_authenticated/dashboard/calls': typeof AuthenticatedDashboardCallsRouteWithChildren
   '/_authenticated/dashboard/chat-history': typeof AuthenticatedDashboardChatHistoryRoute
   '/_authenticated/dashboard/did-numbers': typeof AuthenticatedDashboardDidNumbersRoute
   '/_authenticated/dashboard/integrations': typeof AuthenticatedDashboardIntegrationsRoute
@@ -607,6 +606,7 @@ export interface FileRoutesById {
   '/_authenticated/dashboard/calls/$callId': typeof AuthenticatedDashboardCallsCallIdRoute
   '/_authenticated/dashboard/schedules/$id': typeof AuthenticatedDashboardSchedulesIdRoute
   '/_authenticated/dashboard/agents/': typeof AuthenticatedDashboardAgentsIndexRoute
+  '/_authenticated/dashboard/calls/': typeof AuthenticatedDashboardCallsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -651,7 +651,6 @@ export interface FileRouteTypes {
     | '/dashboard/analytics'
     | '/dashboard/batch-call'
     | '/dashboard/billing'
-    | '/dashboard/calls'
     | '/dashboard/chat-history'
     | '/dashboard/did-numbers'
     | '/dashboard/integrations'
@@ -672,6 +671,7 @@ export interface FileRouteTypes {
     | '/dashboard/calls/$callId'
     | '/dashboard/schedules/$id'
     | '/dashboard/agents/'
+    | '/dashboard/calls/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -713,7 +713,6 @@ export interface FileRouteTypes {
     | '/dashboard/analytics'
     | '/dashboard/batch-call'
     | '/dashboard/billing'
-    | '/dashboard/calls'
     | '/dashboard/chat-history'
     | '/dashboard/did-numbers'
     | '/dashboard/integrations'
@@ -734,6 +733,7 @@ export interface FileRouteTypes {
     | '/dashboard/calls/$callId'
     | '/dashboard/schedules/$id'
     | '/dashboard/agents'
+    | '/dashboard/calls'
   id:
     | '__root__'
     | '/'
@@ -777,7 +777,6 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard/analytics'
     | '/_authenticated/dashboard/batch-call'
     | '/_authenticated/dashboard/billing'
-    | '/_authenticated/dashboard/calls'
     | '/_authenticated/dashboard/chat-history'
     | '/_authenticated/dashboard/did-numbers'
     | '/_authenticated/dashboard/integrations'
@@ -798,6 +797,7 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard/calls/$callId'
     | '/_authenticated/dashboard/schedules/$id'
     | '/_authenticated/dashboard/agents/'
+    | '/_authenticated/dashboard/calls/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -1101,13 +1101,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDashboardChatHistoryRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/dashboard/calls': {
-      id: '/_authenticated/dashboard/calls'
-      path: '/dashboard/calls'
-      fullPath: '/dashboard/calls'
-      preLoaderRoute: typeof AuthenticatedDashboardCallsRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
     '/_authenticated/dashboard/billing': {
       id: '/_authenticated/dashboard/billing'
       path: '/dashboard/billing'
@@ -1227,6 +1220,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminAgentsRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
+    '/_authenticated/dashboard/calls/': {
+      id: '/_authenticated/dashboard/calls/'
+      path: '/dashboard/calls'
+      fullPath: '/dashboard/calls/'
+      preLoaderRoute: typeof AuthenticatedDashboardCallsIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/dashboard/agents/': {
       id: '/_authenticated/dashboard/agents/'
       path: '/dashboard/agents'
@@ -1243,10 +1243,10 @@ declare module '@tanstack/react-router' {
     }
     '/_authenticated/dashboard/calls/$callId': {
       id: '/_authenticated/dashboard/calls/$callId'
-      path: '/$callId'
+      path: '/dashboard/calls/$callId'
       fullPath: '/dashboard/calls/$callId'
       preLoaderRoute: typeof AuthenticatedDashboardCallsCallIdRouteImport
-      parentRoute: typeof AuthenticatedDashboardCallsRoute
+      parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/dashboard/agents/setup': {
       id: '/_authenticated/dashboard/agents/setup'
@@ -1303,21 +1303,6 @@ const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
 const AuthenticatedAdminRouteWithChildren =
   AuthenticatedAdminRoute._addFileChildren(AuthenticatedAdminRouteChildren)
 
-interface AuthenticatedDashboardCallsRouteChildren {
-  AuthenticatedDashboardCallsCallIdRoute: typeof AuthenticatedDashboardCallsCallIdRoute
-}
-
-const AuthenticatedDashboardCallsRouteChildren: AuthenticatedDashboardCallsRouteChildren =
-  {
-    AuthenticatedDashboardCallsCallIdRoute:
-      AuthenticatedDashboardCallsCallIdRoute,
-  }
-
-const AuthenticatedDashboardCallsRouteWithChildren =
-  AuthenticatedDashboardCallsRoute._addFileChildren(
-    AuthenticatedDashboardCallsRouteChildren,
-  )
-
 interface AuthenticatedDashboardSchedulesRouteChildren {
   AuthenticatedDashboardSchedulesIdRoute: typeof AuthenticatedDashboardSchedulesIdRoute
 }
@@ -1339,7 +1324,6 @@ interface AuthenticatedRouteChildren {
   AuthenticatedDashboardAnalyticsRoute: typeof AuthenticatedDashboardAnalyticsRoute
   AuthenticatedDashboardBatchCallRoute: typeof AuthenticatedDashboardBatchCallRoute
   AuthenticatedDashboardBillingRoute: typeof AuthenticatedDashboardBillingRoute
-  AuthenticatedDashboardCallsRoute: typeof AuthenticatedDashboardCallsRouteWithChildren
   AuthenticatedDashboardChatHistoryRoute: typeof AuthenticatedDashboardChatHistoryRoute
   AuthenticatedDashboardDidNumbersRoute: typeof AuthenticatedDashboardDidNumbersRoute
   AuthenticatedDashboardIntegrationsRoute: typeof AuthenticatedDashboardIntegrationsRoute
@@ -1356,7 +1340,9 @@ interface AuthenticatedRouteChildren {
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedDashboardAgentsNewRoute: typeof AuthenticatedDashboardAgentsNewRoute
   AuthenticatedDashboardAgentsSetupRoute: typeof AuthenticatedDashboardAgentsSetupRoute
+  AuthenticatedDashboardCallsCallIdRoute: typeof AuthenticatedDashboardCallsCallIdRoute
   AuthenticatedDashboardAgentsIndexRoute: typeof AuthenticatedDashboardAgentsIndexRoute
+  AuthenticatedDashboardCallsIndexRoute: typeof AuthenticatedDashboardCallsIndexRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
@@ -1365,8 +1351,6 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedDashboardAnalyticsRoute: AuthenticatedDashboardAnalyticsRoute,
   AuthenticatedDashboardBatchCallRoute: AuthenticatedDashboardBatchCallRoute,
   AuthenticatedDashboardBillingRoute: AuthenticatedDashboardBillingRoute,
-  AuthenticatedDashboardCallsRoute:
-    AuthenticatedDashboardCallsRouteWithChildren,
   AuthenticatedDashboardChatHistoryRoute:
     AuthenticatedDashboardChatHistoryRoute,
   AuthenticatedDashboardDidNumbersRoute: AuthenticatedDashboardDidNumbersRoute,
@@ -1389,8 +1373,11 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedDashboardAgentsNewRoute: AuthenticatedDashboardAgentsNewRoute,
   AuthenticatedDashboardAgentsSetupRoute:
     AuthenticatedDashboardAgentsSetupRoute,
+  AuthenticatedDashboardCallsCallIdRoute:
+    AuthenticatedDashboardCallsCallIdRoute,
   AuthenticatedDashboardAgentsIndexRoute:
     AuthenticatedDashboardAgentsIndexRoute,
+  AuthenticatedDashboardCallsIndexRoute: AuthenticatedDashboardCallsIndexRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(

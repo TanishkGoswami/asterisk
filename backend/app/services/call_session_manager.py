@@ -282,4 +282,40 @@ class CallSessionManager:
             self.end_call(call_uuid, "NOANSWER")
             self.cleanup_call(call_uuid)
 
+    def cleanup_stale_db_calls(self, db, timeout_seconds: int = 1800) -> None:
+        """Finds calls in database stuck in active statuses (created, ringing, in_progress) for too long and terminates them."""
+        try:
+            from datetime import datetime, timezone, timedelta
+            cutoff = (datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)).isoformat()
+            
+            # Query stuck calls
+            res = db.table("calls")\
+                .select("id, status")\
+                .in_("status", ["created", "ringing", "in_progress"])\
+                .lt("created_at", cutoff)\
+                .execute()
+                
+            stuck_calls = res.data or []
+            if not stuck_calls:
+                return
+                
+            logger.info(f"[CallSessionManager] Found {len(stuck_calls)} stuck calls in DB. Cleaning them up...")
+            
+            for call in stuck_calls:
+                call_id = call["id"]
+                current_status = call["status"]
+                # If it never got past 'created' or 'ringing', mark it as 'no_answer', else 'failed'
+                target_status = "no_answer" if current_status in ["created", "ringing"] else "failed"
+                
+                db.table("calls").update({
+                    "status": target_status,
+                    "ended_at": datetime.now(timezone.utc).isoformat(),
+                    "drop_reason": "stale_timeout",
+                    "success": False
+                }).eq("id", call_id).execute()
+                
+                logger.info(f"[CallSessionManager] Marked stuck call {call_id} (status: {current_status}) as {target_status}")
+        except Exception as e:
+            logger.error(f"[CallSessionManager] Error cleaning up stale DB calls: {e}", exc_info=True)
+
 call_session_manager = CallSessionManager()

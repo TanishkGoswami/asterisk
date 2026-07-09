@@ -360,7 +360,7 @@ class WarmSarvamConnection:
                         break
                     elif msg_type == "event":
                         event_type = msg.get("data", {}).get("event_type")
-                        if event_type == "final":
+                        if event_type in ("final", "completion"):
                             break
                     elif msg_type == "error":
                         error_msg = msg.get("data", {}).get("message", "Unknown Sarvam WS error")
