@@ -350,7 +350,9 @@ class WarmSarvamConnection:
                 await ws.send(json.dumps(flush_msg))
 
                 # Receive all audio chunks
+                logger.info("[WarmSarvam] Entering websocket receive loop...")
                 async for raw_msg in ws:
+                    logger.info("[WarmSarvam] Received raw message: %s", raw_msg[:200])
                     msg = json.loads(raw_msg)
                     msg_type = msg.get("type")
                     if msg_type == "audio":
