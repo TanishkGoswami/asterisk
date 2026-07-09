@@ -109,27 +109,45 @@ class STTService:
                 ))
                 logger.info("Deepgram STT WS connected (endpointing=%dms)", endpointing)
 
+                import time
+
                 # Task: pump audio_queue → Deepgram
                 async def _send_audio():
-                    while True:
-                        chunk = await audio_queue.get()
-                        if chunk is None:
-                            # Signal Deepgram we're done sending
+                    try:
+                        while True:
+                            chunk = await audio_queue.get()
+                            if chunk is None:
+                                logger.info(f"[STT_SEND_FLOW] Encountered EOF (None in queue) at timestamp={time.time()}")
+                                # Signal Deepgram we're done sending
+                                try:
+                                    await dg_ws.send(json.dumps({"type": "CloseStream"}))
+                                except Exception:
+                                    pass
+                                return
+                            
+                            logger.info(
+                                f"[STT_SEND_FLOW] Dequeued chunk from audio_queue at timestamp={time.time()}, "
+                                f"bytes={len(chunk)}, current_queue_size={audio_queue.qsize()}"
+                            )
                             try:
-                                await dg_ws.send(json.dumps({"type": "CloseStream"}))
-                            except Exception:
-                                pass
-                            return
+                                await dg_ws.send(chunk)
+                                logger.info(
+                                    f"[STT_SEND_FLOW] Sent chunk to Deepgram at timestamp={time.time()}, "
+                                    f"dg_ws_state={getattr(dg_ws, 'state', 'unknown')}"
+                                )
+                            except Exception as exc:
+                                logger.warning(f"STT send error: {exc} at timestamp={time.time()}")
+                                return
+                    finally:
                         try:
-                            await dg_ws.send(chunk)
-                        except Exception as exc:
-                            logger.warning("STT send error: %s", exc)
-                            return
+                            await dg_ws.close()
+                        except Exception:
+                            pass
 
                 # Task: keepalive
                 async def _keepalive():
                     while True:
-                        await asyncio.sleep(8)
+                        await asyncio.sleep(3)
                         try:
                             await dg_ws.send(json.dumps({"type": "KeepAlive"}))
                         except Exception:
@@ -140,6 +158,7 @@ class STTService:
 
                 try:
                     async for raw_msg in dg_ws:
+                        logger.info(f"[STT_RECV_FLOW] Raw msg from Deepgram at timestamp={time.time()}: {raw_msg[:200]}")
                         if not isinstance(raw_msg, str):
                             continue
                         try:

@@ -725,6 +725,8 @@ class AsteriskVoiceSession:
         except Exception as e:
             logger.error(f'[STT loop exception] {e}', exc_info=True)
             return
+        finally:
+            logger.info('[stt_loop] Telephony STT loop exited')
 
     async def run(self) -> None:
         """
@@ -756,6 +758,9 @@ class AsteriskVoiceSession:
                     continue
                 elif msg_type in (16, 1):
                     if len(payload) > 0:
+                        if self.stt_task is None or self.stt_task.done():
+                            logger.warning('[AudioSocket] STT task was done/dead - restarting')
+                            self.stt_task = asyncio.create_task(self.stt_loop())
                         try:
                             self.audio_queue.put_nowait(payload)
                             diagnostics.update_session_state(

@@ -41,6 +41,7 @@ import { Route as AuthenticatedDashboardSettingsRouteImport } from './routes/_au
 import { Route as AuthenticatedDashboardSchedulesRouteImport } from './routes/_authenticated/dashboard/schedules'
 import { Route as AuthenticatedDashboardQaRouteImport } from './routes/_authenticated/dashboard/qa'
 import { Route as AuthenticatedDashboardProfileRouteImport } from './routes/_authenticated/dashboard/profile'
+import { Route as AuthenticatedDashboardPlaygroundRouteImport } from './routes/_authenticated/dashboard/playground'
 import { Route as AuthenticatedDashboardPhoneNumbersRouteImport } from './routes/_authenticated/dashboard/phone-numbers'
 import { Route as AuthenticatedDashboardOutboundRouteImport } from './routes/_authenticated/dashboard/outbound'
 import { Route as AuthenticatedDashboardKnowledgeBaseRouteImport } from './routes/_authenticated/dashboard/knowledge-base'
@@ -235,6 +236,12 @@ const AuthenticatedDashboardProfileRoute =
   AuthenticatedDashboardProfileRouteImport.update({
     id: '/dashboard/profile',
     path: '/dashboard/profile',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedDashboardPlaygroundRoute =
+  AuthenticatedDashboardPlaygroundRouteImport.update({
+    id: '/dashboard/playground',
+    path: '/dashboard/playground',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
 const AuthenticatedDashboardPhoneNumbersRoute =
@@ -459,6 +466,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/knowledge-base': typeof AuthenticatedDashboardKnowledgeBaseRoute
   '/dashboard/outbound': typeof AuthenticatedDashboardOutboundRoute
   '/dashboard/phone-numbers': typeof AuthenticatedDashboardPhoneNumbersRoute
+  '/dashboard/playground': typeof AuthenticatedDashboardPlaygroundRoute
   '/dashboard/profile': typeof AuthenticatedDashboardProfileRoute
   '/dashboard/qa': typeof AuthenticatedDashboardQaRoute
   '/dashboard/schedules': typeof AuthenticatedDashboardSchedulesRouteWithChildren
@@ -520,6 +528,7 @@ export interface FileRoutesByTo {
   '/dashboard/knowledge-base': typeof AuthenticatedDashboardKnowledgeBaseRoute
   '/dashboard/outbound': typeof AuthenticatedDashboardOutboundRoute
   '/dashboard/phone-numbers': typeof AuthenticatedDashboardPhoneNumbersRoute
+  '/dashboard/playground': typeof AuthenticatedDashboardPlaygroundRoute
   '/dashboard/profile': typeof AuthenticatedDashboardProfileRoute
   '/dashboard/qa': typeof AuthenticatedDashboardQaRoute
   '/dashboard/schedules': typeof AuthenticatedDashboardSchedulesRouteWithChildren
@@ -584,6 +593,7 @@ export interface FileRoutesById {
   '/_authenticated/dashboard/knowledge-base': typeof AuthenticatedDashboardKnowledgeBaseRoute
   '/_authenticated/dashboard/outbound': typeof AuthenticatedDashboardOutboundRoute
   '/_authenticated/dashboard/phone-numbers': typeof AuthenticatedDashboardPhoneNumbersRoute
+  '/_authenticated/dashboard/playground': typeof AuthenticatedDashboardPlaygroundRoute
   '/_authenticated/dashboard/profile': typeof AuthenticatedDashboardProfileRoute
   '/_authenticated/dashboard/qa': typeof AuthenticatedDashboardQaRoute
   '/_authenticated/dashboard/schedules': typeof AuthenticatedDashboardSchedulesRouteWithChildren
@@ -648,6 +658,7 @@ export interface FileRouteTypes {
     | '/dashboard/knowledge-base'
     | '/dashboard/outbound'
     | '/dashboard/phone-numbers'
+    | '/dashboard/playground'
     | '/dashboard/profile'
     | '/dashboard/qa'
     | '/dashboard/schedules'
@@ -709,6 +720,7 @@ export interface FileRouteTypes {
     | '/dashboard/knowledge-base'
     | '/dashboard/outbound'
     | '/dashboard/phone-numbers'
+    | '/dashboard/playground'
     | '/dashboard/profile'
     | '/dashboard/qa'
     | '/dashboard/schedules'
@@ -772,6 +784,7 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard/knowledge-base'
     | '/_authenticated/dashboard/outbound'
     | '/_authenticated/dashboard/phone-numbers'
+    | '/_authenticated/dashboard/playground'
     | '/_authenticated/dashboard/profile'
     | '/_authenticated/dashboard/qa'
     | '/_authenticated/dashboard/schedules'
@@ -1037,6 +1050,13 @@ declare module '@tanstack/react-router' {
       path: '/dashboard/profile'
       fullPath: '/dashboard/profile'
       preLoaderRoute: typeof AuthenticatedDashboardProfileRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/dashboard/playground': {
+      id: '/_authenticated/dashboard/playground'
+      path: '/dashboard/playground'
+      fullPath: '/dashboard/playground'
+      preLoaderRoute: typeof AuthenticatedDashboardPlaygroundRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/dashboard/phone-numbers': {
@@ -1326,6 +1346,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedDashboardKnowledgeBaseRoute: typeof AuthenticatedDashboardKnowledgeBaseRoute
   AuthenticatedDashboardOutboundRoute: typeof AuthenticatedDashboardOutboundRoute
   AuthenticatedDashboardPhoneNumbersRoute: typeof AuthenticatedDashboardPhoneNumbersRoute
+  AuthenticatedDashboardPlaygroundRoute: typeof AuthenticatedDashboardPlaygroundRoute
   AuthenticatedDashboardProfileRoute: typeof AuthenticatedDashboardProfileRoute
   AuthenticatedDashboardQaRoute: typeof AuthenticatedDashboardQaRoute
   AuthenticatedDashboardSchedulesRoute: typeof AuthenticatedDashboardSchedulesRouteWithChildren
@@ -1356,6 +1377,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedDashboardOutboundRoute: AuthenticatedDashboardOutboundRoute,
   AuthenticatedDashboardPhoneNumbersRoute:
     AuthenticatedDashboardPhoneNumbersRoute,
+  AuthenticatedDashboardPlaygroundRoute: AuthenticatedDashboardPlaygroundRoute,
   AuthenticatedDashboardProfileRoute: AuthenticatedDashboardProfileRoute,
   AuthenticatedDashboardQaRoute: AuthenticatedDashboardQaRoute,
   AuthenticatedDashboardSchedulesRoute:
