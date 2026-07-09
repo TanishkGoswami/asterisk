@@ -554,12 +554,6 @@ class AsteriskVoiceSession:
         logger.info(f'[Pipeline] OpenAI request -> model={model}, max_tokens={voice_cfg.OPENAI_MAX_OUTPUT_TOKENS}')
 
         try:
-            import re
-            import time
-
-            # Queues
-            import re
-            import time
             full_response = ''
             first_token_logged = False
             llm_first_token_time = None
