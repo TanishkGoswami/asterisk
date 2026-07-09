@@ -287,6 +287,8 @@ class VoiceSession:
         return self._state == "speaking"
 
     def set_state(self, state: str):
+        import time
+        logger.info(f"[TELEMETRY_STATE] transition: '{self._state}' -> '{state}' at timestamp={time.time()}")
         self._state = state
 
     async def send_json(self, data: dict):
@@ -550,21 +552,26 @@ class VoiceSession:
                     
                     if not self.barge_in_event.is_set():
                         if not audio_playback_started_marked:
+                            import time
+                            logger.info(f"[TELEMETRY_TTS] TTS playback starting at timestamp={time.time()}")
                             tracker.mark(AUDIO_PLAYBACK_STARTED)
                             audio_playback_started_marked = True
                             self.set_state("speaking")
-                            import time
                             self.speaking_started_at = time.time()
                         await self.send_audio(audio_chunk)
 
                 current_index += 1
 
+            import time
             if not self.barge_in_event.is_set():
+                logger.info(f"[TELEMETRY_TTS] TTS playback ended cleanly at timestamp={time.time()}")
                 tracker.mark(AUDIO_PLAYBACK_COMPLETED)
                 if self.is_twilio and self.stream_sid:
                     await self.send_json({"event": "mark", "streamSid": self.stream_sid, "mark": {"name": "turn_end"}})
                 else:
                     await self.send_json({"type": "turn_end"})
+            else:
+                logger.info(f"[TELEMETRY_TTS] TTS playback interrupted (barge-in active) at timestamp={time.time()}")
                 
                 lat_summary = tracker.summary()
                 await self.send_json({"type": "latency", **lat_summary})
@@ -891,10 +898,47 @@ async def voice_websocket(ws: WebSocket):
     stt_task: Optional[asyncio.Task] = None
     latest_speech_final_transcript: str = ""
 
+    async def _stt_task_monitor():
+        try:
+            while True:
+                await asyncio.sleep(1.0)
+                import time
+                if stt_task:
+                    done = stt_task.done()
+                    cancelled = stt_task.cancelled()
+                    exc_str = "None"
+                    if done and not cancelled:
+                        try:
+                            exc = stt_task.exception()
+                            exc_str = str(exc) if exc else "None"
+                        except Exception as e:
+                            exc_str = f"Error: {e}"
+                    logger.info(
+                        f"[STT_TASK_MONITOR] timestamp={time.time()}, stt_task: done={done}, "
+                        f"cancelled={cancelled}, exception={exc_str}, queue_size={session.audio_queue.qsize()}, "
+                        f"session_state={session._state}"
+                    )
+                else:
+                    logger.info(
+                        f"[STT_TASK_MONITOR] timestamp={time.time()}, stt_task: None, "
+                        f"queue_size={session.audio_queue.qsize()}, session_state={session._state}"
+                    )
+        except asyncio.CancelledError:
+            pass
+
+    monitor_task = asyncio.create_task(_stt_task_monitor())
+
     # ── STT event loop (runs as background task) ───────────────
     async def _stt_loop():
-        nonlocal latest_speech_final_transcript
+        nonlocal latest_speech_final_transcript, stt_task
         language = session.config.get("language", "en-US")
+        
+        # Auto-detect language from voice: if voice is a Sarvam voice (non-aura) and language is en-US, override to hi-IN
+        voice_id = session.config.get("voice_id", "")
+        if voice_id and not voice_id.startswith("aura-") and language == "en-US":
+            logger.info(f"[LANG_AUTO_DETECT] Voice '{voice_id}' is a Hindi/Sarvam voice. Overriding STT language to 'hi-IN'")
+            language = "hi-IN"
+            
         endpointing = voice_cfg.STT_ENDPOINTING_MS
 
         encoding = "mulaw" if session.is_twilio else "linear16"
@@ -902,88 +946,97 @@ async def voice_websocket(ws: WebSocket):
 
         logger.info(f"[STT_LOOP_START] Starting STT loop: lang={language}, encoding={encoding}, sample_rate={sample_rate}, is_twilio={session.is_twilio}")
 
-        async for event_type, payload in stt.stream_live(
-            audio_queue=session.audio_queue,
-            language=language,
-            endpointing=endpointing,
-            model=voice_cfg.STT_MODEL,
-            encoding=encoding,
-            sample_rate=sample_rate,
-        ):
-            if event_type == EVT_SPEECH_STARTED:
-                # Reset LatencyTracker at start of user speech turn
-                session.latency = LatencyTracker()
-                session.latency.mark(USER_SPEECH_STARTED)
-                if session.is_speaking():
-                    logger.info("[VAD_SPEECH_STARTED] Speech detected by VAD while speaking (ignoring raw VAD for barge-in, relying on transcribed text)")
+        try:
+            async for event_type, payload in stt.stream_live(
+                audio_queue=session.audio_queue,
+                language=language,
+                endpointing=endpointing,
+                model=voice_cfg.STT_MODEL,
+                encoding=encoding,
+                sample_rate=sample_rate,
+            ):
+                if event_type == EVT_SPEECH_STARTED:
+                    # Reset LatencyTracker at start of user speech turn
+                    session.latency = LatencyTracker()
+                    session.latency.mark(USER_SPEECH_STARTED)
+                    latest_speech_final_transcript = ""  # Reset transcript at start of turn
+                    if session.is_speaking():
+                        logger.info("[VAD_SPEECH_STARTED] Speech detected by VAD while speaking (ignoring raw VAD for barge-in, relying on transcribed text)")
 
-            elif event_type in (EVT_INTERIM, EVT_FINAL):
-                transcript = payload.get("transcript", "").strip()
-                await session.send_json({
-                    "type": "transcript",
-                    "text": transcript,
-                    "is_final": payload.get("is_final", False),
-                    "speech_final": False,
-                })
-                if event_type == EVT_INTERIM:
-                    if not session.latency.has_event(DEEPGRAM_FIRST_INTERIM):
-                        session.latency.mark(DEEPGRAM_FIRST_INTERIM)
-                if payload.get("is_final"):
+                elif event_type in (EVT_INTERIM, EVT_FINAL):
+                    transcript = payload.get("transcript", "").strip()
+                    await session.send_json({
+                        "type": "transcript",
+                        "text": transcript,
+                        "is_final": payload.get("is_final", False),
+                        "speech_final": False,
+                    })
+                    if event_type == EVT_INTERIM:
+                        if not session.latency.has_event(DEEPGRAM_FIRST_INTERIM):
+                            session.latency.mark(DEEPGRAM_FIRST_INTERIM)
+                    if payload.get("is_final"):
+                        if not session.latency.has_event(DEEPGRAM_FINAL):
+                            session.latency.mark(DEEPGRAM_FINAL)
+
+                    # Trigger transcript-based barge-in if agent is speaking
+                    if voice_cfg.ENABLE_BARGE_IN and session.is_speaking() and transcript:
+                        # Strip punctuation to verify there are actual characters
+                        clean_text = re.sub(r'[^\w\s]', '', transcript).strip()
+                        if clean_text:
+                            import time
+                            elapsed_speaking = time.time() - session.speaking_started_at
+                            if elapsed_speaking < 1.2:
+                                logger.info(f"[BARGE_IN_IGNORED] Interim/Final transcript '{transcript}' ignored because speaking just started {elapsed_speaking:.2f}s ago (AEC adaptation window)")
+                            else:
+                                logger.info(f"[USER_BARGE_IN_DETECTED] Barge-in triggered via transcript '{transcript}' after {elapsed_speaking:.2f}s")
+                                session.barge_in_event.set()
+                                await session.cancel_llm_tts()
+                                await session.send_json({"type": "stop_audio"})
+                                await session.send_json({"type": "turn_end"})
+
+                elif event_type == EVT_SPEECH_FINAL:
+                    transcript = payload["transcript"]
+                    if not transcript.strip():
+                        continue
+                    session.latency.mark(USER_SPEECH_ENDED)
                     if not session.latency.has_event(DEEPGRAM_FINAL):
                         session.latency.mark(DEEPGRAM_FINAL)
+                    latest_speech_final_transcript = transcript
+                    session.latest_transcript = transcript
+                    logger.info(f"[DEEPGRAM_FINAL_TRANSCRIPT] Final transcript received: '{transcript}'")
 
-                # Trigger transcript-based barge-in if agent is speaking
-                if voice_cfg.ENABLE_BARGE_IN and session.is_speaking() and transcript:
-                    # Strip punctuation to verify there are actual characters
-                    clean_text = re.sub(r'[^\w\s]', '', transcript).strip()
-                    if clean_text:
-                        import time
-                        elapsed_speaking = time.time() - session.speaking_started_at
-                        if elapsed_speaking < 1.2:
-                            logger.info(f"[BARGE_IN_IGNORED] Interim/Final transcript '{transcript}' ignored because speaking just started {elapsed_speaking:.2f}s ago (AEC adaptation window)")
-                        else:
-                            logger.info(f"[USER_BARGE_IN_DETECTED] Barge-in triggered via transcript '{transcript}' after {elapsed_speaking:.2f}s")
-                            session.barge_in_event.set()
-                            await session.cancel_llm_tts()
-                            await session.send_json({"type": "stop_audio"})
-                            await session.send_json({"type": "turn_end"})
+                    await session.send_json({
+                        "type": "transcript",
+                        "text": transcript,
+                        "is_final": True,
+                        "speech_final": True,
+                    })
 
-            elif event_type == EVT_SPEECH_FINAL:
-                transcript = payload["transcript"]
-                if not transcript.strip():
-                    continue
-                session.latency.mark(USER_SPEECH_ENDED)
-                if not session.latency.has_event(DEEPGRAM_FINAL):
-                    session.latency.mark(DEEPGRAM_FINAL)
-                latest_speech_final_transcript = transcript
-                session.latest_transcript = transcript
-                logger.info(f"[DEEPGRAM_FINAL_TRANSCRIPT] Final transcript received: '{transcript}'")
+                    if voice_cfg.ENABLE_EARLY_EOT_LLM:
+                        await session.cancel_llm_tts()
+                        session.llm_tts_task = asyncio.create_task(
+                            session.run_llm_tts_pipeline(transcript)
+                        )
 
-                await session.send_json({
-                    "type": "transcript",
-                    "text": transcript,
-                    "is_final": True,
-                    "speech_final": True,
-                })
+                elif event_type == EVT_UTTERANCE_END:
+                    # Backup trigger if speech_final didn't fire
+                    if (latest_speech_final_transcript
+                            and not voice_cfg.ENABLE_EARLY_EOT_LLM):
+                        await session.cancel_llm_tts()
+                        session.llm_tts_task = asyncio.create_task(
+                            session.run_llm_tts_pipeline(latest_speech_final_transcript)
+                        )
 
-                if voice_cfg.ENABLE_EARLY_EOT_LLM:
-                    await session.cancel_llm_tts()
-                    session.llm_tts_task = asyncio.create_task(
-                        session.run_llm_tts_pipeline(transcript)
-                    )
-
-            elif event_type == EVT_UTTERANCE_END:
-                # Backup trigger if speech_final didn't fire
-                if (latest_speech_final_transcript
-                        and not voice_cfg.ENABLE_EARLY_EOT_LLM):
-                    await session.cancel_llm_tts()
-                    session.llm_tts_task = asyncio.create_task(
-                        session.run_llm_tts_pipeline(latest_speech_final_transcript)
-                    )
-
-            elif event_type == EVT_ERROR:
-                logger.error("STT error: %s", payload)
-                await session.send_json({"type": "error", "message": payload.get("message", "STT error")})
+                elif event_type == EVT_ERROR:
+                    logger.error("STT error: %s", payload)
+                    await session.send_json({"type": "error", "message": payload.get("message", "STT error")})
+        except asyncio.CancelledError:
+            logger.info("[STT_LOOP] STT loop task cancelled")
+        except Exception as e:
+            logger.error("[STT_LOOP] STT loop exception: %s", e, exc_info=True)
+        finally:
+            stt_task = None
+            logger.info("[STT_LOOP] STT loop exited. Setting stt_task = None to allow automatic restart.")
 
     # ── Main receive loop ──────────────────────────────────────
     try:
@@ -1010,8 +1063,14 @@ async def voice_websocket(ws: WebSocket):
 
                 if payload_bytes:
                     frame_count += 1
-                    if frame_count == 1 or frame_count % 100 == 0:
-                        logger.info(f"[MIC_AUDIO_RECEIVED] Received audio frame {frame_count}")
+                    import time
+                    stt_task_status = "None"
+                    if stt_task:
+                        stt_task_status = f"done={stt_task.done()}, cancelled={stt_task.cancelled()}"
+                    logger.info(
+                        f"[AUDIO_IN_PACKET] timestamp={time.time()}, frame={frame_count}, bytes={len(payload_bytes)}, "
+                        f"queue_size={session.audio_queue.qsize()}, stt_task={stt_task_status}, state={session._state}"
+                    )
                     # Audio chunk — forward to Deepgram STT
                     if stt_task is None:
                         # Start STT once we have a config
@@ -1021,6 +1080,7 @@ async def voice_websocket(ws: WebSocket):
                     try:
                         session.audio_queue.put_nowait(payload_bytes)
                     except asyncio.QueueFull:
+                        logger.warning(f"[AUDIO_IN_PACKET] Drop frame due to full queue at timestamp={time.time()}")
                         pass  # Drop if overwhelmed
 
                 elif payload_text:
@@ -1214,6 +1274,8 @@ async def voice_websocket(ws: WebSocket):
         logger.error("[ERROR_WITH_STACK_TRACE] Voice WS error: %s", exc, exc_info=True)
     finally:
         # Cleanup
+        if monitor_task:
+            monitor_task.cancel()
         await session.audio_queue.put(None)  # Signal STT to close
         await session.cancel_llm_tts()
         if session.tts_conn:
