@@ -327,9 +327,10 @@ class WarmSarvamConnection:
         """Send text and yield audio bytes until flushed."""
         text = prepare_for_tts(text)
         audio_chunks = []
+        if self._ws is None or self._ws.state != websockets.State.OPEN:
+            await self.connect()
+
         async with self._lock:
-            if self._ws is None or self._ws.state != websockets.State.OPEN:
-                await self.connect()
 
             ws = self._ws
             try:
