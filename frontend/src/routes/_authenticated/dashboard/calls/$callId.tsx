@@ -195,7 +195,7 @@ function CallDetailsPage() {
                 { label: 'Direction', value: call.direction, mono: true },
                 { label: 'Caller', value: call.caller_phone_number || '—', mono: true },
                 { label: 'Duration', value: formatDuration(call.actual_duration) },
-                { label: 'Cost', value: call.cost ? `$${call.cost.toFixed(4)}` : '—', mono: true },
+                { label: 'Credits Charged', value: call.estimated_cost !== undefined && call.estimated_cost !== null ? `${parseFloat(call.estimated_cost).toFixed(2)}` : '0.00', mono: true },
                 { label: 'Status', value: call.status },
               ].map((meta, i) => (
                 <div key={i} className="flex justify-between items-center group">
@@ -204,6 +204,76 @@ function CallDetailsPage() {
                 </div>
               ))}
             </div>
+          </div>
+
+          <div className="editorial-card p-8 bg-white space-y-8">
+            <div className="flex items-center gap-2 pb-4 border-b border-hairline">
+              <Activity className="h-4 w-4 text-muted-soft" />
+              <h3 className="text-xl font-display">Credit Breakdown</h3>
+            </div>
+            {call.usage ? (
+              <div className="space-y-4">
+                <div className="flex justify-between items-start text-xs border-b border-[#f7f7f5] pb-2">
+                  <div className="flex flex-col">
+                    <span className="font-semibold text-foreground">Speech-to-Text (STT)</span>
+                    {call.usage.stt_audio_seconds !== undefined && call.usage.stt_audio_seconds !== null && (
+                      <span className="text-[10px] text-muted-soft">{call.usage.stt_audio_seconds}s processed</span>
+                    )}
+                  </div>
+                  <span className="font-mono font-medium text-foreground">
+                    {call.usage.stt_cost_inr !== undefined && call.usage.stt_cost_inr !== null ? `${parseFloat(call.usage.stt_cost_inr).toFixed(4)}` : '0.0000'}
+                  </span>
+                </div>
+                
+                <div className="flex justify-between items-start text-xs border-b border-[#f7f7f5] pb-2">
+                  <div className="flex flex-col">
+                    <span className="font-semibold text-foreground">Language Model (LLM)</span>
+                    {call.usage.llm_input_tokens !== undefined && call.usage.llm_input_tokens !== null && 
+                     call.usage.llm_output_tokens !== undefined && call.usage.llm_output_tokens !== null && (
+                      <span className="text-[10px] text-muted-soft">
+                        {call.usage.llm_input_tokens} In / {call.usage.llm_output_tokens} Out
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-mono font-medium text-foreground">
+                    {call.usage.llm_cost_inr !== undefined && call.usage.llm_cost_inr !== null ? `${parseFloat(call.usage.llm_cost_inr).toFixed(4)}` : '0.0000'}
+                  </span>
+                </div>
+                
+                <div className="flex justify-between items-start text-xs border-b border-[#f7f7f5] pb-2">
+                  <div className="flex flex-col">
+                    <span className="font-semibold text-foreground">Text-to-Speech (TTS)</span>
+                    {call.usage.tts_characters !== undefined && call.usage.tts_characters !== null && (
+                      <span className="text-[10px] text-muted-soft">{call.usage.tts_characters} chars synthesized</span>
+                    )}
+                  </div>
+                  <span className="font-mono font-medium text-foreground">
+                    {call.usage.tts_cost_inr !== undefined && call.usage.tts_cost_inr !== null ? `${parseFloat(call.usage.tts_cost_inr).toFixed(4)}` : '0.0000'}
+                  </span>
+                </div>
+                
+                <div className="flex justify-between items-start text-xs border-b border-[#f7f7f5] pb-2">
+                  <div className="flex flex-col">
+                    <span className="font-semibold text-foreground">Telephony</span>
+                    <span className="text-[10px] text-muted-soft">{formatDuration(call.actual_duration)} duration</span>
+                  </div>
+                  <span className="font-mono font-medium text-foreground">
+                    {call.usage.telephony_cost_inr !== undefined && call.usage.telephony_cost_inr !== null ? `${parseFloat(call.usage.telephony_cost_inr).toFixed(4)}` : '0.0000'}
+                  </span>
+                </div>
+                
+                <div className="flex justify-between items-center font-bold text-sm pt-2">
+                  <span>Total Credits</span>
+                  <span className="font-mono text-[#c5b0f4] text-base">
+                    {call.usage.credits_used !== undefined && call.usage.credits_used !== null ? `${parseFloat(call.usage.credits_used).toFixed(4)}` : '0.0000'}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-soft italic leading-relaxed">
+                Credit breakdown is currently unavailable or pending finalization.
+              </p>
+            )}
           </div>
 
           <div className="editorial-card p-8 bg-white space-y-8">

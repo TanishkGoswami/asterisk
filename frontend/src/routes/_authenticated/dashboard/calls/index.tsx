@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -15,14 +15,12 @@ import {
   Filter,
   Download,
   ChevronRight,
-  PhoneCall,
   Loader2,
   History
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
 import { useWorkspace } from "@/context/WorkspaceContext";
 
-export const Route = createFileRoute("/_authenticated/dashboard/calls")({
+export const Route = createFileRoute("/_authenticated/dashboard/calls/")({
   component: CallsPage,
 });
 
@@ -51,8 +49,8 @@ function CallsPage() {
   const { workspaceId: contextWsId, authHeaders: contextHeaders, loading: contextLoading } = useWorkspace();
   const navigate = useNavigate();
   const [calls, setCalls] = useState<any[]>([]);
-  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-  const [authHeaders, setAuthHeaders] = useState<Record<string, string> | null>(null);
+  const [, setWorkspaceId] = useState<string | null>(null);
+  const [, setAuthHeaders] = useState<Record<string, string> | null>(null);
   const [loading, setLoading] = useState(true);
 
   const apiUrl = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -138,6 +136,7 @@ function CallsPage() {
                     <TableHead className="h-12 font-mono text-[10px] uppercase tracking-[0.16em] text-black/40">Timing</TableHead>
                     <TableHead className="h-12 font-mono text-[10px] uppercase tracking-[0.16em] text-black/40">Outcome</TableHead>
                     <TableHead className="h-12 font-mono text-[10px] uppercase tracking-[0.16em] text-black/40">Analysis</TableHead>
+                    <TableHead className="h-12 font-mono text-[10px] uppercase tracking-[0.16em] text-black/40">Credits</TableHead>
                     <TableHead className="h-12 font-mono text-[10px] uppercase tracking-[0.16em] text-black/40">Timestamp</TableHead>
                     <TableHead className="h-12 pr-8 text-right font-mono text-[10px] uppercase tracking-[0.16em] text-black/40">Action</TableHead>
                   </TableRow>
@@ -168,6 +167,11 @@ function CallsPage() {
                           <TableCell className="py-4">
                             {getSentimentBadge(call.sentiment_score)}
                           </TableCell>
+                          <TableCell className="py-4 font-mono text-[13px] text-black/60">
+                            {call.estimated_cost !== undefined && call.estimated_cost !== null
+                              ? parseFloat(call.estimated_cost).toFixed(2)
+                              : "0.00"}
+                          </TableCell>
                           <TableCell className="py-4 text-[13px] font-[330] text-black/40">
                             {new Date(call.created_at).toLocaleDateString()}
                           </TableCell>
@@ -180,7 +184,7 @@ function CallsPage() {
                     ))
                   ) : (
                     <TableRow className="hover:bg-transparent">
-                      <TableCell colSpan={8} className="h-48 text-center text-[15px] font-[330] italic text-black/30">
+                      <TableCell colSpan={9} className="h-48 text-center text-[15px] font-[330] italic text-black/30">
                         Null telemetric records in current sector.
                       </TableCell>
                     </TableRow>
