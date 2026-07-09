@@ -115,6 +115,7 @@ export function AppSidebar() {
     {
       label: "MONITOR",
       items: [
+        { title: "Agent Playground", url: "/dashboard/playground", icon: Search },
         { title: "Call History", url: "/dashboard/calls", icon: History },
         {
           title: "Chat History",
