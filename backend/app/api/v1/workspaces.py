@@ -152,7 +152,64 @@ async def get_workspace_billing(workspace_id: str, db: Client = Depends(get_db))
                 "billing_status": limits_res.data[0].get("billing_status") or "active"
             }
             
-        # 2. Fetch current month usage counter
+        # 2. Reconcile workspace limits using owner's hub subscription
+        # Get owner ID
+        ws_res = db.table("workspaces").select("owner_id").eq("id", workspace_id).execute()
+        owner_id = ws_res.data[0].get("owner_id") if ws_res.data else None
+        
+        owner_email = None
+        if owner_id:
+            profile_res = db.table("profiles").select("email").eq("id", owner_id).execute()
+            owner_email = profile_res.data[0].get("email") if profile_res.data else None
+            
+        plan_name = "Free Tier"
+        if owner_email:
+            sub_res = db.table("hub_subscriptions").select("plan, expires_at, subscription_status").eq("email", owner_email).execute()
+            if sub_res.data:
+                sub = sub_res.data[0]
+                expires_at = sub.get("expires_at")
+                status = sub.get("subscription_status") or "active"
+                is_active = status == "active"
+                if is_active and expires_at:
+                    try:
+                        import dateutil.parser
+                        from datetime import datetime, timezone
+                        expires_dt = dateutil.parser.isoparse(expires_at)
+                        if expires_dt.tzinfo is None:
+                            expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+                        if expires_dt < datetime.now(timezone.utc):
+                            is_active = False
+                    except Exception:
+                        pass
+                if is_active:
+                    plan_name = sub.get("plan") or "Free Tier"
+                    
+        # If paid plan, auto-upgrade limits in limits dict and database
+        if plan_name not in ("Free Tier", "Free", "No active plan"):
+            # Set default paid limits
+            if any(k in plan_name for k in ("Max", "Ecosystem", "Enterprise")):
+                expected_minutes = 10000
+                expected_concurrency = 5
+            else:
+                expected_minutes = 5000
+                expected_concurrency = 3
+                
+            if limits["monthly_minute_limit"] < expected_minutes:
+                limits["monthly_minute_limit"] = expected_minutes
+                limits["max_concurrent_calls"] = expected_concurrency
+                try:
+                    db.table("workspace_limits").upsert({
+                        "workspace_id": workspace_id,
+                        "monthly_minute_limit": expected_minutes,
+                        "max_concurrent_calls": expected_concurrency,
+                        "billing_status": "active"
+                    }).execute()
+                except Exception as upsert_err:
+                    logger.warning(f"Failed to upsert workspace_limits: {upsert_err}")
+        else:
+            plan_name = "Free Tier" if limits["monthly_minute_limit"] <= 1000 else "Growth Plan"
+
+        # 3. Fetch current month usage counter
         import datetime
         current_month = datetime.datetime.now().strftime("%Y-%m")
         
@@ -167,7 +224,7 @@ async def get_workspace_billing(workspace_id: str, db: Client = Depends(get_db))
         remaining_minutes = max(0.0, float(limits["monthly_minute_limit"]) - used_minutes)
         
         return {
-            "plan_name": "Free Tier" if limits["monthly_minute_limit"] <= 1000 else "Growth Plan",
+            "plan_name": plan_name,
             "monthly_minute_limit": limits["monthly_minute_limit"],
             "used_minutes": round(used_minutes, 2),
             "remaining_minutes": round(remaining_minutes, 2),

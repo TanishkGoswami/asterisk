@@ -79,18 +79,28 @@ class Settings(BaseSettings):
     TWILIO_SIP_TRUNK_ENABLED: bool = False
     REAL_DIALING_ENABLED: bool = False
     
+    # Streaming TTS Chunker Configs
+    STREAMING_TTS_MODE: str = "safe_sentence"
+    ADVANCED_CHUNKER: bool = False
+    PUNCTUATION_RESTORE: bool = False
+    FIRST_CHUNK_TIMEOUT_MS: int = 0
+    NEXT_CHUNK_TIMEOUT_MS: int = 1200
+    DISABLE_STREAMING_TTS: bool = True
+    TTS_PREBUFFER_MS: int = 1500
+    MIN_AUDIO_CHUNKS_BEFORE_PLAYBACK: int = 2
+
     # Limits
     call_timeout_seconds: int = 3600  # 1 hour
     inactivity_timeout_seconds: int = 30
     max_concurrent_calls_per_workspace: int = 100
     max_message_history_size: int = 50
-    
+
     # Latency targets
     stt_timeout_seconds: float = 3.0
     llm_timeout_seconds: float = 4.0
     tts_timeout_seconds: float = 5.0
 
-    # Call Admission Control (CAC) Configs
+    # Call Admission Control (CAC) Configs
     allow_calls_without_redis: bool = False
     default_workspace_max_concurrent_calls: int = 1
     default_agent_max_concurrent_calls: int = 1

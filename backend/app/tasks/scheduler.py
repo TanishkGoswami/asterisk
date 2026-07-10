@@ -28,16 +28,42 @@ def poll_and_dispatch(use_celery: bool = True):
     If use_celery=True, dispatches to Celery workers.
     If use_celery=False, executes immediately in the current thread (useful for dev/no-redis).
     """
+    db = get_supabase_client()
+    now_obj = datetime.now(timezone.utc)
+    now_iso = now_obj.isoformat()
+
     # Periodically clean up any stale call sessions that never connected to AudioSocket
     try:
         from app.services.call_session_manager import call_session_manager
         call_session_manager.cleanup_stale_calls(timeout_seconds=120)
+        # Periodically clean up stale calls stuck in active status in the database (older than 30 mins)
+        call_session_manager.cleanup_stale_db_calls(db, timeout_seconds=1800)
     except Exception as e:
         logger.error(f"[Scheduler] Failed to clean up stale calls: {e}")
 
-    db = get_supabase_client()
-    now_obj = datetime.now(timezone.utc)
-    now_iso = now_obj.isoformat()
+    # Periodically reconcile active counters and clean up stale database reservations
+    try:
+        from app.services.call_admission_control import reconcile_active_counters
+        
+        # Helper to run async in sync
+        def run_async(coro):
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            if loop.is_running():
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor() as executor:
+                    return executor.submit(lambda: asyncio.run(coro)).result()
+            else:
+                return loop.run_until_complete(coro)
+
+        run_async(reconcile_active_counters())
+    except Exception as e:
+        logger.error(f"[Scheduler] Failed to reconcile active counters: {e}")
     
     result = db.table("scheduled_tasks")\
         .select("*")\

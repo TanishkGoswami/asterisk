@@ -95,6 +95,16 @@ class AsteriskVoiceSession:
         self.greeting_active = False     # True while initial greeting is playing
         self.greeting_protected = False  # True during initial greeting playback to guard against barge-in
 
+        import inspect
+        filepath = inspect.getfile(inspect.currentframe())
+        logger.info(
+            f"[Startup Check] asterisk_audiosocket.py running from: {filepath}\n"
+            f"  DISABLE_STREAMING_TTS={settings.DISABLE_STREAMING_TTS}\n"
+            f"  STREAMING_TTS_MODE={settings.STREAMING_TTS_MODE}\n"
+            f"  TTS_PREBUFFER_MS={settings.TTS_PREBUFFER_MS}\n"
+            f"  MIN_AUDIO_CHUNKS_BEFORE_PLAYBACK={settings.MIN_AUDIO_CHUNKS_BEFORE_PLAYBACK}"
+        )
+
     def is_speaking(self) -> bool:
         return self._state == 'speaking'
 
@@ -111,7 +121,7 @@ class AsteriskVoiceSession:
         except Exception:
             pass
 
-    async def _send_test_beep(self, freq_hz: float = 440.0, duration_s: float = 3.0, sample_rate: int = 8000) -> None:
+    async def _send_test_beep(self, freq_hz: float = 440.0, duration_s: float = 10.0, sample_rate: int = 8000) -> None:
         """
         Send a sine wave tone through AudioSocket to verify packet framing works.
         If caller hears this beep, AudioSocket write path is correct.
@@ -543,106 +553,479 @@ class AsteriskVoiceSession:
         model = self.config.get('model') or voice_cfg.OPENAI_VOICE_MODEL
         logger.info(f'[Pipeline] OpenAI request -> model={model}, max_tokens={voice_cfg.OPENAI_MAX_OUTPUT_TOKENS}')
 
-        text_chunks: list[str] = []
-        full_response = ''
-
         try:
-            llm_stream = llm.generate_stream(
-                system_prompt=self._build_system_prompt(),
-                messages=compressed_history,
-                model=model,
-                temperature=0.7,
-                max_tokens=voice_cfg.OPENAI_MAX_OUTPUT_TOKENS
-            )
-
-            token_buffer = ''
-            words: list[str] = []
-            is_first_chunk = True
+            full_response = ''
             first_token_logged = False
+            llm_first_token_time = None
 
-            async for token in llm_stream:
-                if self.barge_in_event.is_set():
-                    logger.info(f'[Pipeline] Barge-in during LLM stream for call {self.call_uuid}')
-                    break
-                if not first_token_logged:
-                    first_token_logged = True
-                    logger.info(f'[Pipeline] First LLM token received for call {self.call_uuid}')
+            if settings.DISABLE_STREAMING_TTS:
+                logger.info(f'[Pipeline] MODE_USED=FULL_RESPONSE_TTS for call {self.call_uuid}')
+                llm_stream = llm.generate_stream(
+                    system_prompt=self._build_system_prompt(),
+                    messages=compressed_history,
+                    model=model,
+                    temperature=0.7,
+                    max_tokens=voice_cfg.OPENAI_MAX_OUTPUT_TOKENS
+                )
+                async for token in llm_stream:
+                    if self.barge_in_event.is_set():
+                        logger.info(f'[Pipeline] Barge-in during LLM stream for call {self.call_uuid}')
+                        break
+                    if not first_token_logged:
+                        first_token_logged = True
+                        llm_first_token_time = time.time()
+                        logger.info(f'[Pipeline] LLM First Token Time: {int((llm_first_token_time - pipeline_start) * 1000)}ms')
+                    full_response += token
 
-                token_buffer += token
-                full_response += token
+                if not self.barge_in_event.is_set():
+                    tts_call_count = 0
+                    tts_call_count += 1
+                    if tts_call_count > 1:
+                        raise AssertionError('DISABLE_STREAMING_TTS is True but more than one TTS call happened!')
 
-                temp_words = token_buffer.split()
-                if not token.endswith(' ') and temp_words:
-                    completed_words = temp_words[:-1]
-                    token_buffer = temp_words[-1]
-                else:
-                    completed_words = temp_words
-                    token_buffer = ''
+                    logger.info(f'[Pipeline] calling TTS: FULL_TEXT_LENGTH={len(full_response)}')
+                    pcm_8k = await self._synthesize_to_pcm_8k(full_response, 0)
+                    pcm_bytes = len(pcm_8k)
+                    duration_ms = int(pcm_bytes / 16)
 
-                for word in completed_words:
-                    words.append(word)
-                    limit = (
-                        voice_cfg.TTS_CHUNK_FIRST_WORD_MIN
-                        if is_first_chunk
-                        else voice_cfg.TTS_CHUNK_WORD_MIN
+                    logger.info(
+                        f'[Pipeline] TTS complete:\n'
+                        f'  FULL_TEXT_LENGTH={len(full_response)}\n'
+                        f'  TTS_CALL_COUNT={tts_call_count}\n'
+                        f'  FULL_PCM_BYTES={pcm_bytes}\n'
+                        f'  FULL_AUDIO_DURATION_MS={duration_ms}'
                     )
-                    if len(words) >= limit or ends_with_punctuation(word):
-                        text_chunks.append(' '.join(words))
-                        words = []
-                        is_first_chunk = False
 
-            if words or token_buffer.strip():
-                rem = ' '.join(words)
-                if token_buffer.strip():
-                    rem = (rem + ' ' + token_buffer.strip()).strip()
-                if rem:
-                    text_chunks.append(rem)
+                    import wave
+                    try:
+                        with wave.open('debug_full_response.wav', 'wb') as wav_file:
+                            wav_file.setnchannels(1)
+                            wav_file.setsampwidth(2)
+                            wav_file.setframerate(8000)
+                            wav_file.writeframes(pcm_8k)
+                        logger.info('[Pipeline] Saved WAV to debug_full_response.wav')
+                    except Exception as wav_err:
+                        logger.error(f'Failed to save WAV: {wav_err}')
 
-            logger.info(f'[Pipeline] LLM complete: "{full_response[:200]}", {len(text_chunks)} TTS chunks')
+                    offset = 0
+                    frame_count = 0
+                    underflow_count = 0
 
-            if not text_chunks:
-                logger.warning(f'[Pipeline] No text chunks from LLM for call {self.call_uuid}')
+                    logger.info(f'[Pipeline] Playback Start [Playback Buffer Size: {pcm_bytes} bytes ({duration_ms}ms)]')
+                    playback_start_t = time.time()
+                    logger.info(f'[Pipeline] Playback Start: {int((playback_start_t - pipeline_start) * 1000)}ms')
+
+                    while offset < pcm_bytes and not self.barge_in_event.is_set():
+                        chunk = pcm_8k[offset:offset+320]
+                        offset += 320
+                        frame_count += 1
+
+                        if self._state != 'speaking':
+                            self.set_state('speaking')
+                            self.speaking_started_at = time.time()
+                            logger.info(f'[Pipeline] Speaking started for call {self.call_uuid}')
+
+                        if self.writer.is_closing():
+                            logger.info(f'[AudioSocket] Writer closed mid-playback')
+                            break
+
+                        packet = bytes([0x10]) + len(chunk).to_bytes(2, 'big') + chunk
+                        self.writer.write(packet)
+                        try:
+                            await self.writer.drain()
+                        except Exception as e:
+                            logger.error(f'[AudioSocket] Drain error in flat playback: {e}')
+                            break
+
+                        await asyncio.sleep(0.02)
+
+                    logger.info(
+                        f'[Pipeline] Playback finished:\n'
+                        f'  PLAYBACK_FRAME_COUNT={frame_count}\n'
+                        f'  UNDERFLOW_COUNT={underflow_count}'
+                    )
+
+                self.set_state('idle')
+                self.messages.append({'role': 'assistant', 'content': full_response})
+                elapsed = int((time.time() - pipeline_start) * 1000)
+                logger.info(f'[Pipeline] COMPLETED {pipeline_type.upper()} in {elapsed}ms for call {self.call_uuid}')
+                try:
+                    asyncio.create_task(
+                        asyncio.to_thread(_insert_assist_msg, assistant_seq, full_response, model)
+                    )
+                except Exception as e:
+                    logger.error(f'Failed to schedule assistant message DB write: {e}')
                 return
 
-            # ----------------------------------------------------------------
-            # Synthesize each text chunk to PCM, then play sequentially.
-            # All Sarvam chunks are buffered and resampled at once.
-            # ----------------------------------------------------------------
-            for chunk_idx, text_chunk in enumerate(text_chunks):
-                if self.barge_in_event.is_set():
-                    logger.info(f'[Pipeline] Barge-in before TTS chunk #{chunk_idx}, stopping')
-                    break
+            else:
+                logger.info(f'[Pipeline] MODE_USED=STREAMING_TTS for call {self.call_uuid}')
+                token_queue = asyncio.Queue()
+                sentence_queue = asyncio.Queue()
 
-                logger.info(f'[Pipeline] TTS chunk #{chunk_idx}: "{text_chunk[:80]}"')
-                pcm_8k = await self._synthesize_to_pcm_8k(text_chunk, chunk_idx)
+                # Shared State Variables
+                full_response = ''
+                first_token_logged = False
+                llm_first_token_time = None
+                is_first_chunk = True
+                max_built_idx = -1
 
-                if not pcm_8k:
-                    logger.warning(f'[Pipeline] TTS chunk #{chunk_idx} produced no audio, skipping')
-                    continue
+                sentences_tts_started = 0
+                sentences_tts_finished = 0
 
-                if self.barge_in_event.is_set():
-                    logger.info(f'[Pipeline] Barge-in after TTS chunk #{chunk_idx}, stopping before send')
-                    break
+                playback_buffer = bytearray()
+                playback_offset = 0
 
-                # Mark speaking state on first chunk
-                if self._state != 'speaking':
-                    self.set_state('speaking')
-                    self.speaking_started_at = time.time()
-                    logger.info(f'[Pipeline] Speaking started for call {self.call_uuid}')
+                # Dictionary mapping sentence_idx -> synthesized PCM bytes
+                synthesized_audio = {}
 
-                await self._send_pcm_8k_to_audiosocket(pcm_8k)
+                # Metrics timestamps
+                sentence_ready_time = {}
+                tts_start_time = {}
+                tts_finish_time = {}
+                sentence_played_time = {}
 
-            self.set_state('idle')
-            self.messages.append({'role': 'assistant', 'content': full_response})
-            elapsed = int((time.time() - pipeline_start) * 1000)
-            logger.info(f'[Pipeline] COMPLETED {pipeline_type.upper()} in {elapsed}ms for call {self.call_uuid}')
+                # Protected / Conjunction Words
+                PROTECTED_WORDS = {
+                    "hai", "hoon", "ka", "ki", "ke", "ko", "se", "aur", "lekin", "because", 
+                    "that", "to", "of", "raha", "rahi", "kyunki"
+                }
 
-            try:
-                asyncio.create_task(
-                    asyncio.to_thread(_insert_assist_msg, assistant_seq, full_response, model)
-                )
-            except Exception as e:
-                logger.error(f'Failed to schedule assistant message DB write: {e}')
+                # Greetings list to prevent greeting-only first chunk
+                GREETING_WORDS = {
+                    "hello", "hi", "hey", "namaste", "namaskar", "satsriakal", "pranam", "adaab", "ola", "halo", 
+                    "kaise", "ho", "aap", "tum", "kya", "haal", "hai", "sab", "theek", "ji", "haanji", "haan", 
+                    "good", "morning", "afternoon", "evening", "welcome", "swagat"
+                }
+
+                def is_only_greeting(text: str) -> bool:
+                    clean_text = re.sub(r'[^\w\s]', ' ', text).lower()
+                    words_list = clean_text.split()
+                    if not words_list:
+                        return True
+                    return all(w in GREETING_WORDS for w in words_list)
+
+                def ends_with_sentence_punc(word: str) -> bool:
+                    return len(word) > 0 and word[-1] in ('.', '?', '!', '\u0964')
+
+                def ends_with_pause_punc(word: str) -> bool:
+                    return len(word) > 0 and word[-1] in (',', ';', ':')
+
+                def is_protected_word(word: str) -> bool:
+                    return word.lower().strip(".,?!:;।") in PROTECTED_WORDS
+
+                # Sentence Builder release check
+                def should_release(words_list: list[str], is_first_chunk: bool) -> bool:
+                    num_words = len(words_list)
+                    if num_words == 0:
+                        return False
+
+                    text = ' '.join(words_list)
+                    if is_first_chunk and is_only_greeting(text):
+                        return False
+
+                    last_word = words_list[-1]
+                    if ends_with_sentence_punc(last_word):
+                        return True
+
+                    if ends_with_pause_punc(last_word) and num_words > 18 and not is_protected_word(last_word):
+                        return True
+
+                    # Upper safety fallback limit
+                    if num_words >= 28 and not is_protected_word(last_word):
+                        return True
+
+                    return False
+
+                # 1. LLM Reader Task
+                async def llm_reader():
+                    nonlocal first_token_logged, full_response, llm_first_token_time
+                    try:
+                        llm_stream = llm.generate_stream(
+                            system_prompt=self._build_system_prompt(),
+                            messages=compressed_history,
+                            model=model,
+                            temperature=0.7,
+                            max_tokens=voice_cfg.OPENAI_MAX_OUTPUT_TOKENS
+                        )
+                        async for token in llm_stream:
+                            if self.barge_in_event.is_set():
+                                logger.info(f'[Pipeline] Barge-in during LLM stream for call {self.call_uuid}')
+                                break
+                            if not first_token_logged:
+                                first_token_logged = True
+                                llm_first_token_time = time.time()
+                                logger.info(f'[Pipeline] LLM First Token Time: {int((llm_first_token_time - pipeline_start) * 1000)}ms')
+
+                            full_response += token
+                            if not settings.DISABLE_STREAMING_TTS:
+                                await token_queue.put(token)
+
+                        if settings.DISABLE_STREAMING_TTS and not self.barge_in_event.is_set():
+                            await token_queue.put(full_response)
+                    finally:
+                        await token_queue.put(None)
+
+                # 2. Sentence Builder Task
+                async def speech_chunker():
+                    nonlocal is_first_chunk, max_built_idx
+                    words_list = []
+                    token_buffer = ""
+                    sentence_idx = 0
+
+                    while True:
+                        token = await token_queue.get()
+                        if token is None:
+                            break
+
+                        token_buffer += token
+                        temp_words = token_buffer.split()
+                        if not token.endswith(' ') and temp_words:
+                            completed_words = temp_words[:-1]
+                            token_buffer = temp_words[-1]
+                        else:
+                            completed_words = temp_words
+                            token_buffer = ''
+
+                        for word in completed_words:
+                            words_list.append(word)
+
+                            if should_release(words_list, is_first_chunk):
+                                chunk_text = ' '.join(words_list)
+                                sentence_ready_time[sentence_idx] = time.time()
+                                logger.info(f"[Pipeline] Sentence {sentence_idx} Ready: '{chunk_text[:50]}'")
+
+                                await sentence_queue.put((sentence_idx, chunk_text))
+                                max_built_idx = sentence_idx
+
+                                sentence_idx += 1
+                                words_list = []
+                                is_first_chunk = False
+
+                    if token_buffer.strip():
+                        words_list.append(token_buffer.strip())
+
+                    if words_list:
+                        chunk_text = ' '.join(words_list)
+                        if chunk_text.strip():
+                            sentence_ready_time[sentence_idx] = time.time()
+                            logger.info(f"[Pipeline] Sentence {sentence_idx} Ready (Flush): '{chunk_text[:50]}'")
+                            await sentence_queue.put((sentence_idx, chunk_text))
+                            max_built_idx = sentence_idx
+                            sentence_idx += 1
+
+                    await sentence_queue.put(None)
+
+                # 3. TTS Worker Pool Task
+                async def tts_worker(worker_id: int):
+                    nonlocal sentences_tts_started, sentences_tts_finished
+                    while True:
+                        item = await sentence_queue.get()
+                        if item is None:
+                            await sentence_queue.put(None)
+                            break
+
+                        idx, text = item
+
+                        tts_start_time[idx] = time.time()
+                        wait_time_ms = int((tts_start_time[idx] - sentence_ready_time[idx]) * 1000)
+                        logger.info(f"[Pipeline] Sentence {idx} TTS Start (Worker {worker_id}) [TTS Queue Wait Time: {wait_time_ms}ms]")
+                        sentences_tts_started += 1
+
+                        # High Water Mark buffering protection (> 3 seconds worth of audio)
+                        while len(playback_buffer) - playback_offset > 48000 and not self.barge_in_event.is_set():
+                            await asyncio.sleep(0.1)
+
+                        pcm_8k = await self._synthesize_to_pcm_8k(text, idx)
+
+                        tts_finish_time[idx] = time.time()
+                        duration_ms = int((tts_finish_time[idx] - tts_start_time[idx]) * 1000)
+                        logger.info(f"[Pipeline] Sentence {idx} TTS Finish in {duration_ms}ms (Worker {worker_id})")
+
+                        sentences_tts_finished += 1
+                        synthesized_audio[idx] = pcm_8k
+
+                # 4. Playback Task
+                async def playback_worker():
+                    nonlocal playback_offset, playback_buffer
+
+                    lwm_800ms = int(8000 * 2 * 0.8) # 12,800 bytes
+                    lwm_400ms = int(8000 * 2 * 0.4) # 6,400 bytes
+
+                    logger.info(f"[AudioSocket] Playback buffering: waiting for LWM conditions...")
+
+                    playback_started_logged = False
+                    next_playback_idx = 0
+
+                    while not self.barge_in_event.is_set():
+                        if next_playback_idx in synthesized_audio:
+                            pcm = synthesized_audio[next_playback_idx]
+
+                            if next_playback_idx not in sentence_played_time:
+                                sentence_played_time[next_playback_idx] = time.time()
+                                wait_ms = int((sentence_played_time[next_playback_idx] - tts_finish_time[next_playback_idx]) * 1000)
+                                logger.info(f"[Pipeline] Sentence {next_playback_idx} reached Playback [Audio Queue Wait Time: {wait_ms}ms]")
+
+                            playback_buffer.extend(pcm)
+                            del synthesized_audio[next_playback_idx]
+                            next_playback_idx += 1
+
+                        buffered_available = len(playback_buffer) - playback_offset
+
+                        accumulator_done = (
+                            sentence_queue.empty() 
+                            and next_playback_idx > max_built_idx
+                            and not synthesized_audio
+                        )
+
+                        sentence_1_ready = (playback_offset == 0 and len(playback_buffer) > 0)
+                        sentence_2_generating = (max_built_idx >= 1)
+
+                        if (
+                            buffered_available >= lwm_800ms 
+                            or (sentence_1_ready and sentence_2_generating)
+                            or (accumulator_done and buffered_available > 0)
+                        ):
+                            if not playback_started_logged:
+                                playback_started_logged = True
+                                logger.info(
+                                    f"[Pipeline] Playback Start [Playback Buffer Size: {buffered_available} bytes "
+                                    f"({int(buffered_available/16)}ms)], sentence_1_ready={sentence_1_ready}, "
+                                    f"sentence_2_generating={sentence_2_generating}, accumulator_done={accumulator_done}"
+                                )
+                            break
+                        await asyncio.sleep(0.02)
+
+                    while not self.barge_in_event.is_set():
+                        if next_playback_idx in synthesized_audio:
+                            pcm = synthesized_audio[next_playback_idx]
+
+                            if next_playback_idx not in sentence_played_time:
+                                sentence_played_time[next_playback_idx] = time.time()
+                                wait_ms = int((sentence_played_time[next_playback_idx] - tts_finish_time[next_playback_idx]) * 1000)
+                                logger.info(f"[Pipeline] Sentence {next_playback_idx} reached Playback [Audio Queue Wait Time: {wait_ms}ms]")
+
+                            playback_buffer.extend(pcm)
+                            del synthesized_audio[next_playback_idx]
+                            next_playback_idx += 1
+
+                        buffered_available = len(playback_buffer) - playback_offset
+
+                        accumulator_done = (
+                            sentence_queue.empty() 
+                            and next_playback_idx > max_built_idx
+                            and not synthesized_audio
+                        )
+
+                        if buffered_available < 320:
+                            if accumulator_done:
+                                logger.info(f"[Pipeline] Playback complete for call {self.call_uuid}")
+                                break
+                            else:
+                                logger.warning(
+                                    f"[Pipeline] Playback Underflow: available={buffered_available} bytes, "
+                                    f"next_playback_idx={next_playback_idx}, max_built_idx={max_built_idx}"
+                                )
+                                # Pause playback and wait for LWM 400ms
+                                while not self.barge_in_event.is_set():
+                                    if next_playback_idx in synthesized_audio:
+                                        pcm = synthesized_audio[next_playback_idx]
+                                        playback_buffer.extend(pcm)
+                                        del synthesized_audio[next_playback_idx]
+                                        next_playback_idx += 1
+
+                                    buffered_available = len(playback_buffer) - playback_offset
+                                    accumulator_done = (
+                                        sentence_queue.empty() 
+                                        and next_playback_idx > max_built_idx
+                                        and not synthesized_audio
+                                    )
+                                    if buffered_available >= lwm_400ms or accumulator_done:
+                                        logger.info(f"[Pipeline] Resuming playback after underflow pause: available={buffered_available} bytes")
+                                        break
+                                    await asyncio.sleep(0.05)
+                                continue
+
+                        chunk = bytes(playback_buffer[playback_offset:playback_offset+320])
+                        playback_offset += 320
+
+                        if self._state != 'speaking':
+                            self.set_state('speaking')
+                            self.speaking_started_at = time.time()
+                            logger.info(f'[Pipeline] Speaking started for call {self.call_uuid}')
+
+                        if self.writer.is_closing():
+                            logger.info(f'[AudioSocket] Writer closed mid-playback')
+                            break
+
+                        packet = bytes([0x10]) + len(chunk).to_bytes(2, "big") + chunk
+                        self.writer.write(packet)
+                        try:
+                            await self.writer.drain()
+                        except Exception as e:
+                            logger.error(f'[AudioSocket] Drain error in playback_pacer: {e}')
+                            break
+
+                        await asyncio.sleep(0.02)
+
+                # 5. Pipeline Visualization Task
+                async def pipeline_visualizer():
+                    nonlocal playback_offset, playback_buffer
+                    start_viz = time.time()
+                    while not self.barge_in_event.is_set():
+                        await asyncio.sleep(0.2)
+                        elapsed = time.time() - start_viz
+
+                        llm_bar = "█" * min(20, int(len(full_response) / 5))
+                        sb_bar = "█" * min(20, max_built_idx + 1)
+                        tts_bar = "█" * min(20, sentences_tts_finished)
+
+                        buf_bytes = len(playback_buffer) - playback_offset
+                        buf_ms = int(buf_bytes / 16)
+                        buf_bar = "█" * min(20, int(buf_ms / 100))
+
+                        play_bar = "█" * min(20, int(playback_offset / 1600))
+
+                        tok_q_size = token_queue.qsize()
+                        sent_q_size = sentence_queue.qsize()
+
+                        logger.info(
+                            f"\n--- Pipeline Visualization ({elapsed:.1f}s) ---\n"
+                            f"LLM (Tokens):       {len(full_response):<4} {llm_bar} (Queue Depth: {tok_q_size})\n"
+                            f"Sentence Builder:   {max_built_idx + 1:<4} {sb_bar} (Queue Depth: {sent_q_size})\n"
+                            f"TTS Finished:       {sentences_tts_finished:<4} {tts_bar}\n"
+                            f"Playback Buffer:    {buf_ms:<4}ms {buf_bar}\n"
+                            f"Playback Offset:    {playback_offset:<4} bytes {play_bar}\n"
+                            f"----------------------------------------"
+                        )
+
+                # Start concurrent workers
+                reader_task = asyncio.create_task(llm_reader())
+                chunker_task = asyncio.create_task(speech_chunker())
+                tts_w1 = asyncio.create_task(tts_worker(worker_id=1))
+                tts_w2 = asyncio.create_task(tts_worker(worker_id=2))
+                playback_task = asyncio.create_task(playback_worker())
+                visualizer_task = asyncio.create_task(pipeline_visualizer())
+
+                self.tts_tasks = [reader_task, chunker_task, tts_w1, tts_w2, playback_task, visualizer_task]
+
+                await asyncio.gather(reader_task, chunker_task, tts_w1, tts_w2, playback_task, visualizer_task)
+                self.set_state('idle')
+                self.messages.append({'role': 'assistant', 'content': full_response})
+                elapsed = int((time.time() - pipeline_start) * 1000)
+                logger.info(f'[Pipeline] COMPLETED {pipeline_type.upper()} in {elapsed}ms for call {self.call_uuid}')
+
+                # Clean up all spawned worker tasks
+                for t in self.tts_tasks:
+                    if not t.done():
+                        t.cancel()
+                self.tts_tasks = []
+
+                try:
+                    asyncio.create_task(
+                        asyncio.to_thread(_insert_assist_msg, assistant_seq, full_response, model)
+                    )
+                except Exception as e:
+                    logger.error(f'Failed to schedule assistant message DB write: {e}')
 
         except asyncio.CancelledError:
             logger.info(f'[Pipeline] Cancelled ({pipeline_type}) for call {self.call_uuid}')
