@@ -160,19 +160,18 @@ export function AppSidebar() {
                 {group.items.map((item) => {
                   const isActive =
                     item.url !== "#" && (
-                    location.pathname === item.url ||
-                    location.pathname.startsWith(item.url + "/"));
+                      location.pathname === item.url ||
+                      location.pathname.startsWith(item.url + "/"));
 
                   return (
                     <SidebarMenuItem key={item.title}>
                       <SidebarMenuButton
                         asChild
                         isActive={isActive}
-                        className={`h-8 rounded-full px-3 transition-all duration-200 ${
-                          isActive
+                        className={`h-8 rounded-full px-3 transition-all duration-200 ${isActive
                             ? "bg-[#ebebe9] text-black font-[480] border border-black/5 shadow-sm"
                             : "text-black/60 hover:bg-[#ebebe9] hover:text-black border border-transparent font-[330]"
-                        }`}
+                          }`}
                       >
                         <Link to={item.url} className="flex w-full items-center gap-2">
                           <item.icon className={`h-4 w-4 ${isActive ? "opacity-100" : "opacity-70"}`} strokeWidth={isActive ? 1.5 : 1.25} />
@@ -188,7 +187,7 @@ export function AppSidebar() {
         ))}
       </SidebarContent>
       <SidebarFooter className="border-t border-[#e6e6e6] p-3">
-        <Link 
+        <Link
           to="/dashboard/profile"
           className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-transparent px-2 py-2 transition-colors hover:bg-[#ebebe9]"
         >
