@@ -274,7 +274,7 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
       parsedToneStyles = kb.tone_styles.split(",").map((t: string) => t.trim()).filter(Boolean);
     }
   }
-  
+
   const form = useForm<FormData>({
     resolver: zodResolver(setupSchema),
     defaultValues: {
@@ -302,8 +302,8 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
       hasPromotions: kb.has_promotions || "no",
       promotions: kb.promotions || [],
 
-      qualificationQuestions: kb.qualification_questions?.length 
-        ? kb.qualification_questions 
+      qualificationQuestions: kb.qualification_questions?.length
+        ? kb.qualification_questions
         : ["", "", "", "", ""],
 
       escalationPhone: kb.escalation_phone || "",
@@ -375,7 +375,7 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
     } else if (currentStep === 7) {
       fieldsToValidate = ["escalationEmail"];
     }
-    
+
     const isValid = await form.trigger(fieldsToValidate as any);
     if (isValid) {
       setCurrentStep((prev) => Math.min(prev + 1, FORM_STEPS.length));
@@ -434,10 +434,10 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
             <span>Setup Progress</span>
             <span>Step {currentStep} of {FORM_STEPS.length} — {FORM_STEPS[currentStep - 1].label}</span>
           </div>
-          
+
           {/* Progress Bar Track */}
           <div className="h-1.5 w-full bg-[#f1f1f1] rounded-full overflow-hidden relative">
-            <div 
+            <div
               ref={progressBarRef}
               className="absolute left-0 top-0 h-full bg-black rounded-full"
               style={{ width: "0%" }}
@@ -456,13 +456,12 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
                   key={step.id}
                   type="button"
                   onClick={() => handleStepClick(step.id)}
-                  className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all duration-200 ${
-                    isActive 
-                      ? "bg-black text-white shadow-sm scale-105" 
-                      : isCompleted 
-                        ? "bg-emerald-50 text-emerald-600 hover:bg-emerald-100" 
+                  className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all duration-200 ${isActive
+                      ? "bg-black text-white shadow-sm scale-105"
+                      : isCompleted
+                        ? "bg-emerald-50 text-emerald-600 hover:bg-emerald-100"
                         : "bg-[#f7f7f5] text-black/40 hover:bg-[#ebebe9]"
-                  }`}
+                    }`}
                 >
                   <Icon className="h-4.5 w-4.5" />
                   <span className="hidden md:inline-block font-mono text-[9px] mt-1.5 uppercase tracking-wider truncate max-w-full">
@@ -478,24 +477,24 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
       {/* ── Form View Card ── */}
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
         <div ref={stepContainerRef} className="editorial-card p-6 md:p-8 bg-white shadow-xs space-y-6">
-          
+
           {/* Step 1: General Business Information */}
           {currentStep === 1 && (
             <div className="space-y-6">
-              <SectionHeader 
-                icon={<Building2 className="h-5 w-5 text-black" />} 
-                title="General Business Information" 
-                subtitle="Provide essential organizational and contact details" 
+              <SectionHeader
+                icon={<Building2 className="h-5 w-5 text-black" />}
+                title="General Business Information"
+                subtitle="Provide essential organizational and contact details"
               />
               <div className="grid gap-5 md:grid-cols-2">
                 <FormInput label="Business Name" name="businessName" placeholder="Acme Corporation" form={form} />
                 <FormInput label="Industry / Business Type" name="industry" placeholder="SaaS, E-commerce, Medical, etc." form={form} />
               </div>
-              <FormTextarea 
-                label="What Does Your Business Do?" 
-                name="businessDescription" 
-                placeholder="We specialize in custom CRM software development, providing 24/7 technical support and integrations..." 
-                form={form} 
+              <FormTextarea
+                label="What Does Your Business Do?"
+                name="businessDescription"
+                placeholder="We specialize in custom CRM software development, providing 24/7 technical support and integrations..."
+                form={form}
               />
               <div className="grid gap-5 md:grid-cols-2">
                 <FormInput label="Website Address (URL)" name="websiteUrl" placeholder="https://acme.com" form={form} />
@@ -503,12 +502,12 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
                 <FormInput label="Business Phone Number" name="businessPhone" placeholder="+91 98765-43210" form={form} />
                 <FormInput label="Business Email" name="businessEmail" placeholder="support@acme.com" form={form} />
                 <FormInput label="Hours of Operation" name="hoursOfOperation" placeholder="Mon-Fri 9AM-6PM IST" form={form} />
-                <FormInput 
-                  label="Areas You Serve" 
-                  name="areasServed" 
-                  placeholder="e.g., India / Maharashtra / Mumbai" 
+                <FormInput
+                  label="Areas You Serve"
+                  name="areasServed"
+                  placeholder="e.g., India / Maharashtra / Mumbai"
                   helperText="Specify the geographic hierarchy your business serves: Country / State / City"
-                  form={form} 
+                  form={form}
                 />
                 <FormInput label="Languages Supported" name="languagesSupported" placeholder="English, Hindi, Spanish" form={form} />
               </div>
@@ -518,12 +517,12 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
           {/* Step 2: Services, Products & Pricing */}
           {currentStep === 2 && (
             <div className="space-y-6">
-              <SectionHeader 
-                icon={<Package className="h-5 w-5 text-black" />} 
-                title="Services, Products & Pricing" 
-                subtitle="Configure catalog items the AI can promote and quote" 
+              <SectionHeader
+                icon={<Package className="h-5 w-5 text-black" />}
+                title="Services, Products & Pricing"
+                subtitle="Configure catalog items the AI can promote and quote"
               />
-              
+
               <div className="space-y-4">
                 {serviceFields.length === 0 && (
                   <div className="border border-dashed border-[#e6e6e6] rounded-[16px] p-8 text-center text-muted-foreground text-sm">
@@ -540,7 +539,7 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
                       <Trash2 className="h-4 w-4" />
                     </button>
                     <div className="font-mono text-[10px] text-muted-foreground uppercase">Service/Product #{idx + 1}</div>
-                    
+
                     <div className="grid gap-4 md:grid-cols-2">
                       <FormInput label="Name" name={`servicesProducts.${idx}.name`} placeholder="e.g. Basic Plan Consultation" form={form} />
                       <FormInput label="Price (Optional)" name={`servicesProducts.${idx}.price`} placeholder="e.g. ₹1,500 or ₹500/hour" form={form} />
@@ -566,12 +565,12 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
           {/* Step 3: Booking, Orders & Customer Actions */}
           {currentStep === 3 && (
             <div className="space-y-6">
-              <SectionHeader 
-                icon={<CalendarCheck2 className="h-5 w-5 text-black" />} 
-                title="Booking, Orders & Customer Actions" 
-                subtitle="Manage how the agent collects information or references links" 
+              <SectionHeader
+                icon={<CalendarCheck2 className="h-5 w-5 text-black" />}
+                title="Booking, Orders & Customer Actions"
+                subtitle="Manage how the agent collects information or references links"
               />
-              
+
               <div className="space-y-4">
                 <Label className={LABEL}>Does your business require appointments?</Label>
                 <RadioGroup
@@ -626,12 +625,12 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
               </div>
 
               <FormInput label="Website / Booking Page Link" name="bookingLink" placeholder="https://calendly.com/acme" form={form} />
-              
-              <FormTextarea 
-                label="Action after collecting info" 
-                name="postCollectionAction" 
-                placeholder="Let the caller know we will text them a booking confirmation, and push this lead data to Zapier webhook..." 
-                form={form} 
+
+              <FormTextarea
+                label="Action after collecting info"
+                name="postCollectionAction"
+                placeholder="Let the caller know we will text them a booking confirmation, and push this lead data to Zapier webhook..."
+                form={form}
               />
             </div>
           )}
@@ -639,12 +638,12 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
           {/* Step 4: Frequently Asked Questions */}
           {currentStep === 4 && (
             <div className="space-y-6">
-              <SectionHeader 
-                icon={<HelpCircle className="h-5 w-5 text-black" />} 
-                title="Frequently Asked Questions" 
-                subtitle="Populate static knowledge so the agent handles objections smoothly" 
+              <SectionHeader
+                icon={<HelpCircle className="h-5 w-5 text-black" />}
+                title="Frequently Asked Questions"
+                subtitle="Populate static knowledge so the agent handles objections smoothly"
               />
-              
+
               <div className="space-y-4">
                 {faqFields.map((field, idx) => (
                   <div key={field.id} className="relative p-5 rounded-[16px] bg-[#fcfcfc] border border-[#e6e6e6] space-y-4">
@@ -656,7 +655,7 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
                       <Trash2 className="h-4 w-4" />
                     </button>
                     <div className="font-mono text-[10px] text-muted-foreground uppercase">Question #{idx + 1}</div>
-                    
+
                     <FormInput label="Question" name={`faqs.${idx}.question`} placeholder="e.g. What is your refund policy?" form={form} />
                     <FormTextarea label="Answer" name={`faqs.${idx}.answer`} placeholder="Provide a concise, direct answer suited for text-to-speech voice playback..." form={form} />
                   </div>
@@ -678,10 +677,10 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
           {/* Step 5: Offers, Discounts & Promotions */}
           {currentStep === 5 && (
             <div className="space-y-6">
-              <SectionHeader 
-                icon={<Percent className="h-5 w-5 text-black" />} 
-                title="Offers, Discounts & Promotions" 
-                subtitle="Provide campaign or active promotional variables" 
+              <SectionHeader
+                icon={<Percent className="h-5 w-5 text-black" />}
+                title="Offers, Discounts & Promotions"
+                subtitle="Provide campaign or active promotional variables"
               />
 
               <div className="space-y-4">
@@ -728,7 +727,7 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
                       <FormTextarea label="Terms & Conditions (Optional)" name={`promotions.${idx}.terms`} placeholder="e.g. Cannot be combined with other offers" form={form} />
                     </div>
                   ))}
-                  
+
                   <Button
                     type="button"
                     variant="outline"
@@ -746,28 +745,27 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
           {/* Step 6: Customer Qualification Questions */}
           {currentStep === 6 && (
             <div className="space-y-6">
-              <SectionHeader 
-                icon={<ClipboardCheck className="h-5 w-5 text-black" />} 
-                title="Customer Qualification Questions" 
-                subtitle="Specific query slots the agent can use to pre-qualify leads" 
+              <SectionHeader
+                icon={<ClipboardCheck className="h-5 w-5 text-black" />}
+                title="Customer Qualification Questions"
+                subtitle="Specific query slots the agent can use to pre-qualify leads"
               />
-              
+
               <div className="p-5 rounded-[16px] bg-[#f7f7f5] space-y-4">
                 <p className="text-xs text-muted-foreground italic leading-relaxed">
                   Provide up to 5 questions you want the AI voice agent to ask callers to qualify their needs (e.g. budget, timeframe, urgency). Leave blank if not required.
                 </p>
-                
+
                 {Array.from({ length: 5 }).map((_, idx) => (
                   <div key={idx} className="space-y-2">
                     <Label className={LABEL}>Qualification Question {idx + 1}</Label>
                     <Input
-                      placeholder={`e.g. ${
-                        idx === 0 
-                          ? "What is your typical monthly budget for this service?" 
-                          : idx === 1 
-                            ? "How soon are you looking to get started?" 
+                      placeholder={`e.g. ${idx === 0
+                          ? "What is your typical monthly budget for this service?"
+                          : idx === 1
+                            ? "How soon are you looking to get started?"
                             : "Write question details..."
-                      }`}
+                        }`}
                       className={INPUT}
                       {...form.register(`qualificationQuestions.${idx}`)}
                     />
@@ -780,36 +778,36 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
           {/* Step 7: Rules & Boundaries */}
           {currentStep === 7 && (
             <div className="space-y-6">
-              <SectionHeader 
-                icon={<ShieldAlert className="h-5 w-5 text-black" />} 
-                title="Rules & Boundaries" 
-                subtitle="Enforce constraints, topics to avoid, and escalation transfer parameters" 
+              <SectionHeader
+                icon={<ShieldAlert className="h-5 w-5 text-black" />}
+                title="Rules & Boundaries"
+                subtitle="Enforce constraints, topics to avoid, and escalation transfer parameters"
               />
-              
+
               <div className="grid gap-5 md:grid-cols-2">
                 <FormInput label="Escalation Phone (Transfer Direct)" name="escalationPhone" placeholder="+91 98765-43210" form={form} />
                 <FormInput label="Escalation Email" name="escalationEmail" placeholder="escalation@acme.com" form={form} />
               </div>
 
-              <FormTextarea 
-                label="Situations Where AI Should Transfer To A Human" 
-                name="humanTransferSituations" 
-                placeholder="If the caller asks for refunds, files a formal complaint, requests custom pricing negotiations, or repeatedly asks to speak to a manager..." 
-                form={form} 
+              <FormTextarea
+                label="Situations Where AI Should Transfer To A Human"
+                name="humanTransferSituations"
+                placeholder="If the caller asks for refunds, files a formal complaint, requests custom pricing negotiations, or repeatedly asks to speak to a manager..."
+                form={form}
               />
 
-              <FormTextarea 
-                label="Things the AI Must NEVER Say" 
-                name="mustNeverSay" 
-                placeholder="Do not promise exact delivery times, do not share employee cell numbers, and never say we offer 100% money-back guarantees..." 
-                form={form} 
+              <FormTextarea
+                label="Things the AI Must NEVER Say"
+                name="mustNeverSay"
+                placeholder="Do not promise exact delivery times, do not share employee cell numbers, and never say we offer 100% money-back guarantees..."
+                form={form}
               />
 
-              <FormTextarea 
-                label="Topics the AI Should Avoid Discussing" 
-                name="topicsToAvoid" 
-                placeholder="Legal disputes, competitor pricing comparisons, and political or personal viewpoints..." 
-                form={form} 
+              <FormTextarea
+                label="Topics the AI Should Avoid Discussing"
+                name="topicsToAvoid"
+                placeholder="Legal disputes, competitor pricing comparisons, and political or personal viewpoints..."
+                form={form}
               />
             </div>
           )}
@@ -817,10 +815,10 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
           {/* Step 8: AI Personality & Communication Style */}
           {currentStep === 8 && (
             <div className="space-y-6">
-              <SectionHeader 
-                icon={<Sparkles className="h-5 w-5 text-black" />} 
-                title="AI Personality & Communication Style" 
-                subtitle="Tailor how the agent sounds and handles greetings/closings" 
+              <SectionHeader
+                icon={<Sparkles className="h-5 w-5 text-black" />}
+                title="AI Personality & Communication Style"
+                subtitle="Tailor how the agent sounds and handles greetings/closings"
               />
 
               <div className="space-y-3">
@@ -840,27 +838,25 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-1">
                         {TONE_OPTIONS.map((tone) => {
                           const isChecked = currentTones.includes(tone);
-                          
+
                           return (
-                            <div 
-                              key={tone} 
+                            <div
+                              key={tone}
                               onClick={() => {
-                                const updated = isChecked 
+                                const updated = isChecked
                                   ? currentTones.filter(t => t !== tone)
                                   : [...currentTones, tone];
                                 field.onChange(updated);
                               }}
-                              className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all duration-200 cursor-pointer select-none ${
-                                isChecked 
-                                  ? "border-black bg-black/5 shadow-xs" 
+                              className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all duration-200 cursor-pointer select-none ${isChecked
+                                  ? "border-black bg-black/5 shadow-xs"
                                   : "border-[#e6e6e6] bg-canvas-soft hover:border-black/30"
-                              }`}
+                                }`}
                             >
-                              <div className={`h-4 w-4 rounded-sm border shrink-0 flex items-center justify-center transition-all ${
-                                isChecked 
-                                  ? "bg-black border-black text-white" 
+                              <div className={`h-4 w-4 rounded-sm border shrink-0 flex items-center justify-center transition-all ${isChecked
+                                  ? "bg-black border-black text-white"
                                   : "border-neutral-300 bg-white"
-                              }`}>
+                                }`}>
                                 {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
                               </div>
                               <span className="text-xs font-semibold text-foreground select-none">{tone}</span>
@@ -871,31 +867,31 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
                     );
                   }}
                 />
-                
+
                 <div className="pt-2">
                   <FormInput label="Other Tone Style" name="otherToneStyle" placeholder="e.g. Quirky, Playful, Empathetic" form={form} />
                 </div>
               </div>
 
-              <FormTextarea 
-                label="Preferred Greeting Message" 
-                name="greetingMessage" 
-                placeholder="e.g. Thanks for calling Acme Support! This is VoicePilot, how can I help you today?" 
-                form={form} 
+              <FormTextarea
+                label="Preferred Greeting Message"
+                name="greetingMessage"
+                placeholder="e.g. Thanks for calling Acme Support! This is VoicePilot, how can I help you today?"
+                form={form}
               />
 
-              <FormTextarea 
-                label="Preferred Closing Message" 
-                name="closingMessage" 
-                placeholder="e.g. Thank you for your time, have a wonderful rest of your day! Goodbye." 
-                form={form} 
+              <FormTextarea
+                label="Preferred Closing Message"
+                name="closingMessage"
+                placeholder="e.g. Thank you for your time, have a wonderful rest of your day! Goodbye."
+                form={form}
               />
 
-              <FormTextarea 
-                label="Specific Communication Instructions" 
-                name="communicationInstructions" 
-                placeholder="Speak slowly, spell out product names if asked, and always verify their name before booking a date..." 
-                form={form} 
+              <FormTextarea
+                label="Specific Communication Instructions"
+                name="communicationInstructions"
+                placeholder="Speak slowly, spell out product names if asked, and always verify their name before booking a date..."
+                form={form}
               />
             </div>
           )}
@@ -903,24 +899,24 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
           {/* Step 9: Additional Business Information & Final Notes */}
           {currentStep === 9 && (
             <div className="space-y-6">
-              <SectionHeader 
-                icon={<FileText className="h-5 w-5 text-black" />} 
-                title="Additional Business Information & Final Notes" 
-                subtitle="Review details and submit profile config" 
+              <SectionHeader
+                icon={<FileText className="h-5 w-5 text-black" />}
+                title="Additional Business Information & Final Notes"
+                subtitle="Review details and submit profile config"
               />
 
-              <FormTextarea 
-                label="Additional Information (Optional)" 
-                name="additionalInfo" 
-                placeholder="Any special details, company policies, or unique constraints not mentioned in previous steps..." 
-                form={form} 
+              <FormTextarea
+                label="Additional Information (Optional)"
+                name="additionalInfo"
+                placeholder="Any special details, company policies, or unique constraints not mentioned in previous steps..."
+                form={form}
               />
 
-              <FormTextarea 
-                label="Anything else to know (Optional)" 
-                name="finalNotes" 
-                placeholder="Miscellaneous constraints, context on how your staff works..." 
-                form={form} 
+              <FormTextarea
+                label="Anything else to know (Optional)"
+                name="finalNotes"
+                placeholder="Miscellaneous constraints, context on how your staff works..."
+                form={form}
               />
 
               {/* Complete Confirmation Panel */}
@@ -948,7 +944,7 @@ export function AgentSetupForm({ agentId, agentName, initialData }: AgentSetupFo
               <ChevronLeft className="h-4 w-4 mr-1.5" />
               Back
             </Button>
-            
+
             <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
               {SKIP_STEPS.includes(currentStep) && (
                 <Button
@@ -1043,19 +1039,17 @@ function FormCheckbox({ label, name, form }: { label: string; name: string; form
       render={({ field }) => {
         const isChecked = !!field.value;
         return (
-          <div 
+          <div
             onClick={() => field.onChange(!isChecked)}
-            className={`flex items-center gap-3 p-3 rounded-xl border transition-all duration-200 cursor-pointer select-none ${
-              isChecked 
-                ? "border-black bg-black/5" 
+            className={`flex items-center gap-3 p-3 rounded-xl border transition-all duration-200 cursor-pointer select-none ${isChecked
+                ? "border-black bg-black/5"
                 : "border-[#e6e6e6] bg-canvas-soft hover:border-black/30"
-            }`}
+              }`}
           >
-            <div className={`h-4 w-4 rounded-sm border shrink-0 flex items-center justify-center transition-all ${
-              isChecked 
-                ? "bg-black border-black text-white" 
+            <div className={`h-4 w-4 rounded-sm border shrink-0 flex items-center justify-center transition-all ${isChecked
+                ? "bg-black border-black text-white"
                 : "border-neutral-300 bg-white"
-            }`}>
+              }`}>
               {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
             </div>
             <span className="text-xs font-semibold text-foreground select-none">{label}</span>
