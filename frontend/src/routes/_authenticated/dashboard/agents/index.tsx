@@ -373,7 +373,7 @@ function AgentsPage() {
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-8 px-4 py-3 md:px-5 md:py-4">
       <div className="space-y-8">
-        
+
         {/* Header Section */}
         <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
           <div className="space-y-3">
@@ -400,10 +400,10 @@ function AgentsPage() {
         </div>
 
         {loading ? (
-            <div className="flex flex-col items-center justify-center space-y-5 py-24">
-             <Loader2 className="h-10 w-10 animate-spin text-black opacity-20" />
-             <p className="font-mono text-[12px] uppercase tracking-widest opacity-40">Loading neural profiles...</p>
-            </div>
+          <div className="flex flex-col items-center justify-center space-y-5 py-24">
+            <Loader2 className="h-10 w-10 animate-spin text-black opacity-20" />
+            <p className="font-mono text-[12px] uppercase tracking-widest opacity-40">Loading neural profiles...</p>
+          </div>
         ) : error ? (
           <div className="flex flex-col gap-3 rounded-[20px] border border-[#e6e6e6] bg-[#efd4d4]/10 p-8 text-black">
             <h2 className="text-[20px] font-bold">Initialization Error</h2>
@@ -433,62 +433,60 @@ function AgentsPage() {
                 </div>
 
                 {/* Stats Section */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between border-b border-[#f1f1f1] py-2">
-                    <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-black/40">Total Calls</span>
-                    <span className="text-[14px] font-bold">{agent.total_calls ?? 0}</span>
+                {/* Action Grid */}
+                <div className="flex flex-col gap-1.5 mt-1">
+                  {/* Top Row: Configure Button spans full width */}
+                  <div className="w-full">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 rounded-lg border-[#e6e6e6] hover:bg-[#f7f7f5] hover:text-black text-[11px] font-semibold gap-1.5 justify-center w-full"
+                      asChild
+                    >
+                      <Link to="/dashboard/agents/new" search={{ agentId: agent.id }}>
+                        <Settings className="h-3 w-3 text-black/60" />
+                        Configure
+                      </Link>
+                    </Button>
                   </div>
-                  <div className="flex items-center justify-between border-b border-[#f1f1f1] py-2">
-                    <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-black/40">Voice Persona</span>
-                    <span className="text-[13px] font-medium capitalize text-black">{(agent.voice_id || "").split("-")[1] || agent.voice_id || "—"}</span>
-                  </div>
-                </div>
 
-                {/* Action Grid (2x2) */}
-                <div className="grid grid-cols-2 gap-1.5 mt-1">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 rounded-lg border-[#e6e6e6] hover:bg-[#f7f7f5] hover:text-black text-[11px] font-semibold gap-1.5 justify-center w-full"
-                    asChild
-                  >
-                    <Link to="/dashboard/agents/new" search={{ agentId: agent.id }}>
-                      <Settings className="h-3 w-3 text-black/60" />
-                      Configure
-                    </Link>
-                  </Button>
-                  
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 rounded-lg border-[#e6e6e6] hover:bg-[#f7f7f5] hover:text-black text-[11px] font-semibold gap-1.5 justify-center w-full"
-                    asChild
-                  >
-                    <Link to="/dashboard/qa" search={{ agentId: agent.id }}>
-                      <Search className="h-3 w-3 text-black/60" />
-                      Playground
-                    </Link>
-                  </Button>
-                  
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 rounded-lg border-[#e6e6e6] hover:bg-[#f7f7f5] hover:text-black text-[11px] font-semibold gap-1.5 justify-center w-full"
-                    onClick={() => setTestCallAgent(agent)}
-                  >
-                    <PhoneCall className="h-3 w-3 text-black/60" />
-                    Test Call
-                  </Button>
-                  
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 rounded-lg border-red-100 text-red-500 hover:bg-red-50/50 hover:border-red-200 hover:text-red-600 text-[11px] font-semibold gap-1.5 justify-center w-full"
-                    onClick={() => setConfirmDeleteId(agent.id)}
-                  >
-                    <Trash2 className="h-3 w-3 text-red-500" />
-                    Delete
-                  </Button>
+                  {/* Hidden Playground Button (Commented out / Hidden from layout) */}
+                  {false && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 rounded-lg border-[#e6e6e6] hover:bg-[#f7f7f5] hover:text-black text-[11px] font-semibold gap-1.5 justify-center w-full"
+                      asChild
+                    >
+                      <Link to="/dashboard/qa" search={{ agentId: agent.id }}>
+                        <Search className="h-3 w-3 text-black/60" />
+                        Playground
+                      </Link>
+                    </Button>
+                  )}
+
+                  {/* Bottom Row: Test Call and Delete side-by-side */}
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 rounded-lg border-[#e6e6e6] hover:bg-[#f7f7f5] hover:text-black text-[11px] font-semibold gap-1.5 justify-center w-full"
+                      onClick={() => setTestCallAgent(agent)}
+                    >
+                      <PhoneCall className="h-3 w-3 text-black/60" />
+                      Test Call
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 rounded-lg border-red-100 text-red-500 hover:bg-red-50/50 hover:border-red-200 hover:text-red-600 text-[11px] font-semibold gap-1.5 justify-center w-full"
+                      onClick={() => setConfirmDeleteId(agent.id)}
+                    >
+                      <Trash2 className="h-3 w-3 text-red-500" />
+                      Delete
+                    </Button>
+                  </div>
                 </div>
 
                 {/* Footer */}
@@ -520,7 +518,7 @@ function AgentsPage() {
                 {activeCallId ? "Live Test Call" : "Test Call"}
               </DialogTitle>
               <DialogDescription className="text-center text-[15px] font-[320] text-neutral-500 leading-normal max-w-xs mx-auto">
-                {activeCallId 
+                {activeCallId
                   ? `Monitoring call with ${testCallAgent?.name}`
                   : "Connect your physical phone to your AI agent instance."}
               </DialogDescription>
@@ -700,7 +698,7 @@ function AgentsPage() {
                             {transcriptMessages.map((msg, idx) => {
                               const isUser = msg.role === "user";
                               const latencyObj = callRecord?.metadata?.latency_by_sequence?.[String(msg.sequence_number)];
-                              
+
                               return (
                                 <div key={msg.id || idx} className={`flex flex-col ${isUser ? "items-end" : "items-start"} space-y-1.5`}>
                                   <div className={`flex items-start gap-2.5 max-w-[85%] ${isUser ? "flex-row-reverse" : "flex-row"}`}>
