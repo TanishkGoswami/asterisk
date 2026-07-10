@@ -237,7 +237,7 @@ def run_voice_call(task_id: str, payload: Dict[str, Any], attempt: int = 1):
                     if endpoint_check["returncode"] != 0 or "Unable to find" in endpoint_check["stdout"] or "not found" in endpoint_check["stdout"].lower():
                         raise ValueError(f"SIP Trunk Endpoint '{endpoint_name}' does not exist in Asterisk")
 
-                    orig_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092"
+                    orig_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local/n application AudioSocket {call_id},127.0.0.1:9092"
                     res = execute_asterisk_cli(orig_cmd)
                     if res["returncode"] != 0:
                         raise ValueError(f"Asterisk local originate failed (code {res['returncode']}): {res['stderr'] or res['stdout']}")
@@ -294,7 +294,7 @@ def run_voice_call(task_id: str, payload: Dict[str, Any], attempt: int = 1):
                             ssh_cmd += ["-i", ssh_key]
                         ssh_cmd += [
                             f"{ssh_user}@{ssh_host}",
-                            f"asterisk -rx 'channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092'"
+                            f"asterisk -rx 'channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local/n application AudioSocket {call_id},127.0.0.1:9092'"
                         ]
                         try:
                             import subprocess
@@ -310,11 +310,11 @@ def run_voice_call(task_id: str, payload: Dict[str, Any], attempt: int = 1):
                     if not call_originated:
                         import platform
                         import shlex
-                        orig_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092"
+                        orig_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local/n application AudioSocket {call_id},127.0.0.1:9092"
                         if platform.system() == "Windows":
                             cmd = ["wsl", "-u", "root", "bash", "-c", f"asterisk -rx {shlex.quote(orig_cmd)}"]
                         else:
-                            cmd = ["asterisk", "-rx", f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092"]
+                            cmd = ["asterisk", "-rx", f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local/n application AudioSocket {call_id},127.0.0.1:9092"]
                         try:
                             res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
                             if res.returncode == 0:
