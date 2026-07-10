@@ -78,10 +78,10 @@ const SARVAM_VOICES = [
 ];
 
 const AVAILABLE_NAMES = [
-  "aayan", "aditya", "advait", "amit", "anand", "ashutosh", "dev", "gokul", 
-  "ishita", "kabir", "kavitha", "kavya", "manan", "mani", "mohit", "neha", 
-  "pooja", "priya", "rahul", "ratan", "rehan", "ritu", "rohan", "roopa", 
-  "rupali", "shreya", "shruti", "shubh", "simran", "soham", "suhani", "sumit", 
+  "aayan", "aditya", "advait", "amit", "anand", "ashutosh", "dev", "gokul",
+  "ishita", "kabir", "kavitha", "kavya", "manan", "mani", "mohit", "neha",
+  "pooja", "priya", "rahul", "ratan", "rehan", "ritu", "rohan", "roopa",
+  "rupali", "shreya", "shruti", "shubh", "simran", "soham", "suhani", "sumit",
   "sunny", "tanya", "tarun", "varun", "vijay"
 ];
 
@@ -91,15 +91,15 @@ const getVoiceLabel = (v: string) => {
     if (match) return match.label;
     return `${v.replace("aura-", "").charAt(0).toUpperCase() + v.replace("aura-", "").slice(1)}`;
   }
-  
+
   const nameLower = v.toLowerCase().trim();
   const nameCapitalized = nameLower.charAt(0).toUpperCase() + nameLower.slice(1);
-  
+
   const FEMALE_VOICES = [
-    "meera", "shreya", "ishita", "kavitha", "kavya", "neha", "pooja", 
+    "meera", "shreya", "ishita", "kavitha", "kavya", "neha", "pooja",
     "priya", "ritu", "roopa", "rupali", "shruti", "simran", "suhani", "tanya"
   ];
-  
+
   const gender = FEMALE_VOICES.includes(nameLower) ? "Female" : "Male";
   return `${nameCapitalized} (Sarvam) — ${gender}, Hindi`;
 };
@@ -191,16 +191,16 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
 
   const handleAgentChange = async (agentId: string) => {
     if (agentId === "none") return;
-    
+
     setSelectedAgentId(agentId);
-    
+
     // Stop active stream and clean up UI
     stopSession();
     setLastTranscript("");
     setLlmResponseText("");
     setLatency(null);
     setKnowledgeBasePreview("");
-    
+
     if (agentId) {
       await loadAgent(agentId);
     }
@@ -371,7 +371,7 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
     if (!text.trim()) return;
     setIsLoading(true);
     setStatus("Thinking...");
-    
+
     // Immediately stop any active voice stream audio
     if (voiceClientRef.current) {
       voiceClientRef.current.bargeIn();
@@ -423,7 +423,7 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     currentAudioRef.current = audio;
-    
+
     void audio.play();
     audio.onended = () => {
       URL.revokeObjectURL(url);
@@ -458,7 +458,7 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
     }
 
     let rawVal = voiceId.toLowerCase().trim();
-    
+
     // Explicitly handle fallbacks first
     let mappedVoice = "";
     if (rawVal.includes("meera")) {
@@ -577,7 +577,7 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
                 </Select>
               </div>
 
-              <div className="space-y-1.5">
+              {false && (<div className="space-y-1.5">
                 <Label className="font-mono text-[9px] uppercase tracking-widest text-black/50">
                   Intelligence Model
                 </Label>
@@ -594,6 +594,8 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
                   </SelectContent>
                 </Select>
               </div>
+              )
+              }
 
               <div className="space-y-1.5">
                 <Label className="font-mono text-[9px] uppercase tracking-widest text-black/50">
@@ -671,9 +673,9 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
                       const val = d.deviceId || "default";
                       return (
                         <SelectItem
-                           key={val}
-                           value={val}
-                           className="text-[13px] truncate max-w-[200px]"
+                          key={val}
+                          value={val}
+                          className="text-[13px] truncate max-w-[200px]"
                         >
                           {d.label || "Standard Mic"}
                         </SelectItem>
@@ -719,13 +721,12 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
                   <div key={label as string} className="flex justify-between items-center">
                     <span className="font-mono text-[9px] text-black/50">{label}</span>
                     <span
-                      className={`font-mono text-[10px] font-[600] ${
-                        (ms as number) < 600
-                          ? "text-[#1ea64a]"
-                          : (ms as number) < 1200
+                      className={`font-mono text-[10px] font-[600] ${(ms as number) < 600
+                        ? "text-[#1ea64a]"
+                        : (ms as number) < 1200
                           ? "text-[#f5a623]"
                           : "text-red-500"
-                      }`}
+                        }`}
                     >
                       {ms != null ? `${ms}ms` : "—"}
                     </span>
@@ -742,30 +743,26 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
             className={`group relative flex min-h-[380px] md:min-h-[460px] flex-col overflow-hidden rounded-[20px] border border-[#e6e6e6] bg-white shadow-lg`}
           >
             <div
-              className={`flex items-center justify-between border-b p-4 transition-colors duration-500 ${
-                isRecording ? "bg-[#ff3d8b] border-transparent" : "bg-[#c5b0f4] border-black/5"
-              }`}
+              className={`flex items-center justify-between border-b p-4 transition-colors duration-500 ${isRecording ? "bg-[#ff3d8b] border-transparent" : "bg-[#c5b0f4] border-black/5"
+                }`}
             >
               <div className="flex items-center gap-3">
                 <div
-                  className={`flex h-7 w-7 items-center justify-center rounded-[10px] border border-black/10 shadow-sm ${
-                    isRecording ? "bg-white/20" : "bg-white"
-                  }`}
+                  className={`flex h-7 w-7 items-center justify-center rounded-[10px] border border-black/10 shadow-sm ${isRecording ? "bg-white/20" : "bg-white"
+                    }`}
                 >
                   <Activity className={`h-4 w-4 ${isRecording ? "text-white" : "text-black"}`} />
                 </div>
                 <div>
                   <span
-                    className={`block text-[14px] font-[480] leading-none ${
-                      isRecording ? "text-white" : "text-black"
-                    }`}
+                    className={`block text-[14px] font-[480] leading-none ${isRecording ? "text-white" : "text-black"
+                      }`}
                   >
                     Intelligence Reactor
                   </span>
                   <span
-                    className={`mt-1 block font-mono text-[9px] uppercase tracking-[0.16em] opacity-60 ${
-                      isRecording ? "text-white" : "text-black"
-                    }`}
+                    className={`mt-1 block font-mono text-[9px] uppercase tracking-[0.16em] opacity-60 ${isRecording ? "text-white" : "text-black"
+                      }`}
                   >
                     {isRecording ? "Live Stream Active" : "System Standby"}
                   </span>
@@ -778,8 +775,8 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
                     {isAssistantSpeaking
                       ? "Agent Speaking"
                       : isUserSpeaking
-                      ? "User Speaking"
-                      : "Listening"}
+                        ? "User Speaking"
+                        : "Listening"}
                   </span>
                 </div>
               )}
@@ -812,20 +809,19 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
                     <div className="flex items-center justify-between px-1">
                       <div className="flex items-center gap-2">
                         <div
-                          className={`h-2 w-2 rounded-full transition-colors ${
-                            isAssistantSpeaking
-                              ? "bg-[#c5b0f4] shadow-[0_0_8px_#c5b0f4]"
-                              : isUserSpeaking
+                          className={`h-2 w-2 rounded-full transition-colors ${isAssistantSpeaking
+                            ? "bg-[#c5b0f4] shadow-[0_0_8px_#c5b0f4]"
+                            : isUserSpeaking
                               ? "bg-[#ff3d8b] shadow-[0_0_8px_#ff3d8b]"
                               : "bg-[#999999]"
-                          }`}
+                            }`}
                         />
                         <span className="font-mono text-[10px] uppercase tracking-wider text-black/50">
                           {isAssistantSpeaking
                             ? "Agent Speaking"
                             : isUserSpeaking
-                            ? "Speech Detected"
-                            : "Ambient Noise"}
+                              ? "Speech Detected"
+                              : "Ambient Noise"}
                         </span>
                       </div>
                       <span className="font-mono text-[10px] uppercase tracking-wider text-black/50">
@@ -895,9 +891,8 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
                   />
                 </div>
                 <Button
-                  className={`h-10 w-10 rounded-full p-0 transition-all duration-300 ${
-                    textInput.trim() ? "bg-[#c5b0f4] text-black" : "bg-[#ebebe9] text-black/50"
-                  }`}
+                  className={`h-10 w-10 rounded-full p-0 transition-all duration-300 ${textInput.trim() ? "bg-[#c5b0f4] text-black" : "bg-[#ebebe9] text-black/50"
+                    }`}
                   onClick={() => void submitTextRequest(textInput)}
                   disabled={isLoading || !textInput.trim()}
                 >
@@ -944,11 +939,10 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
                 </span>
               </div>
               <div
-                className={`flex h-6 w-6 items-center justify-center rounded-full ${
-                  status !== "idle" && status !== "Listening..."
-                    ? "bg-black text-white animate-spin"
-                    : "bg-black/5"
-                }`}
+                className={`flex h-6 w-6 items-center justify-center rounded-full ${status !== "idle" && status !== "Listening..."
+                  ? "bg-black text-white animate-spin"
+                  : "bg-black/5"
+                  }`}
               >
                 <RefreshCw className="h-3 w-3" />
               </div>
