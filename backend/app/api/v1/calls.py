@@ -483,7 +483,7 @@ async def test_call(
         endpoint_name = f"provider-{trunk_id}"
         caller_id = from_number or "+18166536732"
 
-        originate_cmd_str = f"asterisk -rx 'channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092'"
+        originate_cmd_str = f"asterisk -rx 'channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local/n application AudioSocket {call_id},127.0.0.1:9092'"
 
         call_originated = False
 
@@ -506,7 +506,7 @@ async def test_call(
                     )
                     
                 # 3. Execute local originate command directly (no SSH fallback, return errors)
-                originate_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092"
+                originate_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local/n application AudioSocket {call_id},127.0.0.1:9092"
                 res = execute_asterisk_cli(originate_cmd)
                 if res["returncode"] != 0:
                     raise HTTPException(
@@ -584,7 +584,7 @@ async def test_call(
                         ssh_cmd += ["-i", ssh_key]
                     ssh_cmd += [
                         f"{ssh_user}@{ssh_host}",
-                        f"asterisk -rx 'channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092'"
+                        f"asterisk -rx 'channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local/n application AudioSocket {call_id},127.0.0.1:9092'"
                     ]
                     try:
                         # Increased timeout to 60 seconds to accommodate network/routing latency
@@ -601,10 +601,10 @@ async def test_call(
                 if not call_originated:
                     import platform
                     if platform.system() == "Windows":
-                        orig_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092"
+                        orig_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local/n application AudioSocket {call_id},127.0.0.1:9092"
                         cmd = ["wsl", "-u", "root", "bash", "-c", f"asterisk -rx {shlex.quote(orig_cmd)}"]
                     else:
-                        cmd = ["asterisk", "-rx", f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_id},127.0.0.1:9092"]
+                        cmd = ["asterisk", "-rx", f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local/n application AudioSocket {call_id},127.0.0.1:9092"]
                     try:
                         # Increased timeout to 60 seconds to accommodate slow WSL start/execution latency
                         res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -966,7 +966,7 @@ async def asterisk_outbound_call(body: Dict[str, Any], db: Client = Depends(get_
     endpoint_name = f"provider-{trunk_id}"
     caller_id = from_number or "+18166536732"
 
-    orig_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local application AudioSocket {call_uuid},127.0.0.1:9092"
+    orig_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local/n application AudioSocket {call_uuid},127.0.0.1:9092"
 
     call_originated = False
 
@@ -1128,7 +1128,7 @@ async def test_local_originate(payload: Dict[str, Any]):
             pass
 
     t_id = provider.replace("provider-", "") if provider.startswith("provider-") else provider
-    orig_cmd = f"channel originate Local/{caller}*{t_id}*{dial_number}@outbound-local application AudioSocket {call_uuid},127.0.0.1:9092"
+    orig_cmd = f"channel originate Local/{caller}*{t_id}*{dial_number}@outbound-local/n application AudioSocket {call_uuid},127.0.0.1:9092"
 
     
     # Execute command
