@@ -29,16 +29,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { cn } from "@/lib/utils"
 import {
   ArrowLeft, Bot, Save, AudioLines, Loader2,
-  Globe, Shield, Zap, User, CheckCircle2, Phone,
   Building2, Package, CalendarCheck2, HelpCircle,
   Percent, ClipboardCheck, ShieldAlert, Sparkles,
   FileText, Plus, Trash2, ChevronLeft, ChevronRight,
-  Check,
+  Check, CheckCircle2
 } from 'lucide-react'
-import { compileSystemPrompt, SetupFormValues } from "@/lib/agentSetup"
+import { compileSystemPrompt } from "@/lib/agentSetup"
 import { toast } from "sonner"
 
 gsap.registerPlugin(useGSAP);
@@ -53,22 +51,32 @@ export const Route = createFileRoute('/_authenticated/dashboard/agents/new')({
 const LABEL = "font-mono text-[11px] uppercase tracking-[0.1em] text-[#999999]"
 const INPUT = "h-11 bg-[#f7f7f5] border-transparent rounded-[12px] px-4 text-[14px] font-[450] focus:bg-white focus:border-[#e6e6e6] transition-all"
 const TEXTAREA = "min-h-[100px] bg-[#f7f7f5] border-transparent rounded-[12px] p-3 text-[14px] font-[450] focus:bg-white focus:border-[#e6e6e6] transition-all"
-const DESC  = "text-[11px] text-[#999999] font-[320] italic"
+const DESC = "text-[11px] text-[#999999] font-[320] italic"
 
 const FORM_STEPS = [
-  { id: 1, label: "Core Config", icon: AudioLines },
-  { id: 2, label: "Business Info", icon: Building2 },
-  { id: 3, label: "Services & Pricing", icon: Package },
-  { id: 4, label: "Booking Actions", icon: CalendarCheck2 },
-  { id: 5, label: "FAQs", icon: HelpCircle },
-  { id: 6, label: "Offers & Promos", icon: Percent },
-  { id: 7, label: "Qualification", icon: ClipboardCheck },
-  { id: 8, label: "Rules & Safety", icon: ShieldAlert },
-  { id: 9, label: "Personality", icon: Sparkles },
-  { id: 10, label: "Final Notes", icon: FileText }
+  {
+    id: 1,
+    label: "Core Configuration",
+    icon: AudioLines
+  },
+  {
+    id: 2,
+    label: "Business Profile & Operations",
+    icon: Building2
+  },
+  {
+    id: 3,
+    label: "Knowledge & Engagement",
+    icon: HelpCircle
+  },
+  {
+    id: 4,
+    label: "Agent Behavior & Policies",
+    icon: ShieldAlert
+  }
 ];
 
-const SKIP_STEPS = [4, 5, 6, 10];
+const SKIP_STEPS = [2, 3];
 
 const TONE_OPTIONS = [
   "Professional",
@@ -92,7 +100,6 @@ const phoneSchema = z.string().optional().refine(
 );
 
 const formSchema = z.object({
-  // Step 1: Core Configuration
   name: z.string().min(2, { message: "Agent name must be at least 2 characters." }),
   ttsProvider: z.string().default("deepgram"),
   language: z.string({ required_error: "Please select a language." }),
@@ -102,7 +109,6 @@ const formSchema = z.object({
   responseTiming: z.number().min(0).max(5000),
   phoneNumberId: z.string().optional(),
 
-  // Step 2: General Business Information
   businessName: z.string().min(2, "Business name is required"),
   industry: z.string().min(2, "Industry is required"),
   agent_system_prompt: z.string().optional(),
@@ -117,7 +123,6 @@ const formSchema = z.object({
   areasServed: z.string().optional(),
   languagesSupported: z.string().optional(),
 
-  // Step 3: Services, Products & Pricing
   servicesProducts: z.array(
     z.object({
       name: z.string().optional(),
@@ -146,7 +151,6 @@ const formSchema = z.object({
     });
   }),
 
-  // Step 4: Booking, Orders & Customer Actions
   requiresAppointments: z.enum(["yes", "no"]),
   appointmentInfoToCollect: z.object({
     name: z.boolean(),
@@ -161,7 +165,6 @@ const formSchema = z.object({
   bookingLink: z.string().url("Must be a valid URL starting with https://").or(z.literal("")).optional(),
   postCollectionAction: z.string().optional(),
 
-  // Step 5: Frequently Asked Questions
   faqs: z.array(
     z.object({
       question: z.string().optional(),
@@ -188,7 +191,6 @@ const formSchema = z.object({
     });
   }),
 
-  // Step 6: Offers, Discounts & Promotions
   hasPromotions: z.enum(["yes", "no"]),
   promotions: z.array(
     z.object({
@@ -218,24 +220,20 @@ const formSchema = z.object({
     });
   }),
 
-  // Step 7: Customer Qualification Questions
   qualificationQuestions: z.array(z.string()),
 
-  // Step 8: Rules & Boundaries
   escalationPhone: phoneSchema,
   escalationEmail: z.string().email("Invalid email address").or(z.literal("")).optional(),
   humanTransferSituations: z.string().optional(),
   mustNeverSay: z.string().optional(),
   topicsToAvoid: z.string().optional(),
 
-  // Step 9: AI Personality & Communication Style
   toneStyles: z.array(z.string()),
   otherToneStyle: z.string().optional(),
   greetingMessage: z.string().optional(),
   closingMessage: z.string().optional(),
   communicationInstructions: z.string().optional(),
 
-  // Step 10: Additional Business Information & Final Notes
   additionalInfo: z.string().optional(),
   finalNotes: z.string().optional(),
 });
@@ -254,7 +252,6 @@ function CreateAgentPage() {
   const [niches, setNiches] = useState<string[]>([]);
   const [selectedNicheOption, setSelectedNicheOption] = useState<string>("");
   const [customNiche, setCustomNiche] = useState<string>("");
-  const ttsUserChangedRef = useRef(false)
   const stepContainerRef = useRef<HTMLDivElement>(null)
   const progressBarRef = useRef<HTMLDivElement>(null)
 
@@ -269,7 +266,6 @@ function CreateAgentPage() {
       responseTiming: 800,
       language: "en-US",
       phoneNumberId: "none",
-
       businessName: "",
       industry: "",
       agent_system_prompt: "",
@@ -331,7 +327,6 @@ function CreateAgentPage() {
     name: "promotions",
   });
 
-  // GSAP: Animate step transitions
   useGSAP(() => {
     if (!stepContainerRef.current) return;
     gsap.fromTo(
@@ -341,7 +336,6 @@ function CreateAgentPage() {
     );
   }, [currentStep]);
 
-  // GSAP: Animate progress bar fill
   useGSAP(() => {
     if (!progressBarRef.current) return;
     const progressPercentage = ((currentStep - 1) / (FORM_STEPS.length - 1)) * 100;
@@ -355,12 +349,11 @@ function CreateAgentPage() {
   useEffect(() => {
     async function init() {
       try {
-        // Fetch niches list from niche_system_prompts table
         const { data: nichesData, error: nichesError } = await supabase
           .from("niche_system_prompts")
           .select("niche_name")
           .order("niche_name", { ascending: true });
-        
+
         let fetchedNiches: string[] = [];
         if (nichesError) {
           console.error("Error fetching niches:", nichesError);
@@ -380,7 +373,6 @@ function CreateAgentPage() {
           'ngrok-skip-browser-warning': 'true',
         };
 
-        // 1. Workspace setup
         const setupRes = await fetch(`${apiUrl}/api/v1/workspaces/setup`, {
           method: 'POST',
           headers: { ...headers, 'Content-Type': 'application/json' },
@@ -390,23 +382,19 @@ function CreateAgentPage() {
         const { workspace_id } = await setupRes.json();
         setWorkspaceId(workspace_id);
 
-        // 2. Fetch available phone numbers
         const pnRes = await fetch(`${apiUrl}/api/v1/workspaces/${workspace_id}/phone-numbers`, { headers });
         if (pnRes.ok) {
           const numbers = await pnRes.json();
           setAvailablePhoneNumbers(numbers);
         }
 
-        // 3. Load agent if editing
         if (agentId) {
           const res = await fetch(`${apiUrl}/api/v1/workspaces/${workspace_id}/agents/${agentId}`, { headers });
           if (!res.ok) throw new Error("Failed to load agent");
           const agent = await res.json();
 
           const kb = agent.kb_metadata || {};
-          ttsUserChangedRef.current = false;
 
-          // Safely parse appointment_info_to_collect
           let parsedAppointmentInfo = {
             name: true,
             phone: true,
@@ -452,7 +440,6 @@ function CreateAgentPage() {
             }
           }
 
-          // Safely parse tone_styles
           let parsedToneStyles: string[] = [];
           if (kb.tone_styles) {
             if (Array.isArray(kb.tone_styles)) {
@@ -471,7 +458,6 @@ function CreateAgentPage() {
             allowInterruptions: agent.interrupt_enabled ?? true,
             responseTiming: kb.vad_latency || 800,
             phoneNumberId: agent.phone_number_id || "none",
-
             businessName: kb.business_name || agent.name || "",
             industry: kb.industry || "",
             agent_system_prompt: agent.agent_system_prompt || "",
@@ -494,8 +480,8 @@ function CreateAgentPage() {
             faqs: kb.faqs?.length ? kb.faqs : Array.from({ length: 5 }).map(() => ({ question: "", answer: "" })),
             hasPromotions: kb.has_promotions || "no",
             promotions: kb.promotions || [],
-            qualificationQuestions: kb.qualification_questions?.length 
-              ? kb.qualification_questions 
+            qualificationQuestions: kb.qualification_questions?.length
+              ? kb.qualification_questions
               : ["", "", "", "", ""],
             escalationPhone: kb.escalation_phone || "",
             escalationEmail: kb.escalation_email || "",
@@ -510,7 +496,6 @@ function CreateAgentPage() {
             additionalInfo: kb.additional_info || "",
             finalNotes: kb.final_notes || "",
           });
-          // Set dropdown select and custom input state based on loaded industry
           const loadedIndustry = kb.industry || agent.niche || "";
           const isCustom = agent.is_custom_niche || false;
           if (loadedIndustry) {
@@ -533,7 +518,7 @@ function CreateAgentPage() {
       }
     }
     init();
-  }, [agentId, form])
+  }, [agentId, form]);
 
   async function onSubmit(values: FormValues) {
     setIsSubmitting(true)
@@ -546,7 +531,6 @@ function CreateAgentPage() {
       }
       const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/$/, "")
 
-      // Map dynamic lists
       const cleanServicesProducts = (values.servicesProducts || []).filter(
         (s) => s.name?.trim() && s.description?.trim()
       );
@@ -560,7 +544,6 @@ function CreateAgentPage() {
         (q) => q?.trim()
       );
 
-      // Re-map with clean fields
       const cleanFormValues = {
         ...values,
         servicesProducts: cleanServicesProducts,
@@ -570,7 +553,6 @@ function CreateAgentPage() {
       };
 
       const kbMetadata = {
-        // Steps 2-10 details
         business_name: values.businessName,
         industry: values.industry,
         business_description: values.businessDescription,
@@ -603,8 +585,6 @@ function CreateAgentPage() {
         communication_instructions: values.communicationInstructions || "",
         additional_info: values.additionalInfo || "",
         final_notes: values.finalNotes || "",
-
-        // Extra keys for backwards compatibility
         top_services: cleanServicesProducts.map(s => s.name).join(", "),
         pricing_range: cleanServicesProducts.map(s => `${s.name}: ${s.price || "Contact"}`).join(" | "),
         faq_barrier: cleanFaqs?.[0]?.question || "",
@@ -615,7 +595,6 @@ function CreateAgentPage() {
           .join(", "),
       };
 
-      // Compile instructions prompt from form fields
       const compiledPrompt = compileSystemPrompt(cleanFormValues as any);
 
       const agentData = {
@@ -636,7 +615,6 @@ function CreateAgentPage() {
         is_custom_niche: selectedNicheOption === "Other",
       };
 
-      let saveResult;
       const agentUrl = agentId
         ? `${apiUrl}/api/v1/workspaces/${workspaceId}/agents/${agentId}`
         : `${apiUrl}/api/v1/workspaces/${workspaceId}/agents`;
@@ -661,8 +639,6 @@ function CreateAgentPage() {
         const errorBody = await agentRes.json().catch(() => ({}));
         throw new Error(errorBody.detail || `Failed to save agent: HTTP ${agentRes.status}`);
       }
-
-      saveResult = await agentRes.json();
 
       toast.success("AI Agent configured and deployed successfully!");
       navigate({ to: '/dashboard/agents' });
@@ -770,8 +746,6 @@ function CreateAgentPage() {
         }, { onConflict: "agent_id" });
       if (contextError) {
         console.error("Failed to directly upsert agent_system_prompt:", contextError);
-      } else {
-        console.log("Successfully direct upserted agent_system_prompt to DB");
       }
 
       const { error: agentError } = await supabase
@@ -783,8 +757,6 @@ function CreateAgentPage() {
         .eq("id", agentId);
       if (agentError) {
         console.error("Failed to directly update agent niche:", agentError);
-      } else {
-        console.log("Successfully direct updated agent niche to DB");
       }
     } catch (err) {
       console.error("Error direct saving step 2 data:", err);
@@ -796,19 +768,14 @@ function CreateAgentPage() {
     if (currentStep === 1) {
       fieldsToValidate = ["name", "language", "voice"];
     } else if (currentStep === 2) {
-      fieldsToValidate = ["businessName", "industry", "businessDescription", "websiteUrl", "businessEmail"];
+      fieldsToValidate = [
+        "businessName", "industry", "businessDescription", "websiteUrl", "businessEmail",
+        "bookingLink", "requiresAppointments"
+      ];
     } else if (currentStep === 3) {
-      fieldsToValidate = ["servicesProducts"];
-    } else if (currentStep === 4) {
-      fieldsToValidate = ["bookingLink", "requiresAppointments"];
-    } else if (currentStep === 5) {
-      fieldsToValidate = ["faqs"];
-    } else if (currentStep === 6) {
-      fieldsToValidate = ["promotions"];
-    } else if (currentStep === 8) {
-      fieldsToValidate = ["escalationEmail"];
+      fieldsToValidate = ["servicesProducts", "faqs", "promotions"];
     }
-    
+
     const isValid = await form.trigger(fieldsToValidate as any);
     if (isValid) {
       if (currentStep === 2 && agentId) {
@@ -876,10 +843,10 @@ function CreateAgentPage() {
             <span>Progress Tracking</span>
             <span>Step {currentStep} of {FORM_STEPS.length} — {FORM_STEPS[currentStep - 1].label}</span>
           </div>
-          
+
           {/* Progress Bar Track */}
           <div className="h-1.5 w-full bg-[#f1f1f1] rounded-full overflow-hidden relative">
-            <div 
+            <div
               ref={progressBarRef}
               className="absolute left-0 top-0 h-full bg-black rounded-full"
               style={{ width: "0%" }}
@@ -887,7 +854,7 @@ function CreateAgentPage() {
           </div>
 
           {/* Step Icon Grid */}
-          <div className="grid grid-cols-5 md:grid-cols-10 gap-1.5 pt-2">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-2">
             {FORM_STEPS.map((step) => {
               const Icon = step.icon;
               const isActive = step.id === currentStep;
@@ -898,16 +865,15 @@ function CreateAgentPage() {
                   key={step.id}
                   type="button"
                   onClick={() => handleStepClick(step.id)}
-                  className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all duration-200 ${
-                    isActive 
-                      ? "bg-black text-white shadow-sm scale-105" 
-                      : isCompleted 
-                        ? "bg-emerald-50 text-emerald-600 hover:bg-emerald-100" 
-                        : "bg-[#f7f7f5] text-black/40 hover:bg-[#ebebe9]"
-                  }`}
+                  className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all duration-200 ${isActive
+                    ? "bg-black text-white shadow-sm scale-105"
+                    : isCompleted
+                      ? "bg-emerald-50 text-emerald-600 hover:bg-emerald-100"
+                      : "bg-[#f7f7f5] text-black/40 hover:bg-[#ebebe9]"
+                    }`}
                 >
                   <Icon className="h-4.5 w-4.5" />
-                  <span className="hidden md:inline-block font-mono text-[9px] mt-1.5 uppercase tracking-wider truncate max-w-full">
+                  <span className="font-mono text-[9px] mt-1.5 uppercase tracking-wider truncate max-w-full">
                     {step.label}
                   </span>
                 </button>
@@ -918,15 +884,15 @@ function CreateAgentPage() {
       </div>
 
       <Form {...form}>
-        <form 
+        <form
           onSubmit={form.handleSubmit(onSubmit, (errors) => {
             console.warn("Validation errors:", errors);
             const errKeys = Object.keys(errors);
             toast.error("Form validation failed. Please check fields: " + errKeys.join(", "));
-          })} 
+          })}
           className="space-y-6"
         >
-          <div ref={stepContainerRef} className="editorial-card p-6 md:p-8 bg-white shadow-xs space-y-6">
+          <div ref={stepContainerRef} className="editorial-card p-6 md:p-8 bg-white shadow-xs space-y-8">
 
             {/* Step 1: Core Configuration */}
             {currentStep === 1 && (
@@ -937,577 +903,570 @@ function CreateAgentPage() {
                   subtitle="Identity & Basic Behavior"
                 />
 
-                 <div className="grid gap-5 md:grid-cols-2">
-                   <FormField control={form.control as any} name="name" render={({ field }) => (
-                     <FormItem className="space-y-2">
-                       <FormLabel className={LABEL}>Internal Persona Name</FormLabel>
-                       <FormControl>
-                         <Input placeholder="e.g. Lead Qualification Expert" className={INPUT} {...field} />
-                       </FormControl>
-                       <FormDescription className={DESC}>Visible only in administrative view.</FormDescription>
-                       <FormMessage />
-                     </FormItem>
-                   )} />
- 
-                   <FormField control={form.control as any} name="language" render={({ field }) => (
-                     <FormItem className="space-y-2">
-                       <FormLabel className={LABEL}>Primary Dialect</FormLabel>
-                       <Select onValueChange={field.onChange} value={field.value}>
-                         <FormControl>
-                           <SelectTrigger className={INPUT}>
-                             <SelectValue placeholder="Select language" />
-                           </SelectTrigger>
-                         </FormControl>
-                         <SelectContent className="rounded-lg border-[#e6e6e6]">
-                           <SelectItem value="en-US">English (United States)</SelectItem>
-                           <SelectItem value="en-GB">English (United Kingdom)</SelectItem>
-                           <SelectItem value="hi-IN">Hindi (India)</SelectItem>
-                           <SelectItem value="es-ES">Spanish</SelectItem>
-                         </SelectContent>
-                       </Select>
-                       <FormDescription className={DESC}>The primary dialect/accent spoken.</FormDescription>
-                       <FormMessage />
-                     </FormItem>
-                   )} />
- 
-                   <FormField control={form.control as any} name="voice" render={({ field }) => (
-                     <FormItem className="space-y-2">
-                       <FormLabel className={LABEL}>Synthesis Engine</FormLabel>
-                       <Select onValueChange={field.onChange} value={field.value}>
-                         <FormControl>
-                           <SelectTrigger className={INPUT}>
-                             <SelectValue placeholder="Select a voice model" />
-                           </SelectTrigger>
-                         </FormControl>
-                         <SelectContent className="rounded-xl border-hairline shadow-lg">
-                           {filteredVoices.map((v) => (
-                             <SelectItem key={v.value} value={v.value}>{v.label}</SelectItem>
-                           ))}
-                         </SelectContent>
-                       </Select>
-                       <FormDescription className={DESC}>The voice profile of the agent.</FormDescription>
-                       <FormMessage />
-                     </FormItem>
-                   )} />
- 
-                   <FormField control={form.control as any} name="allowInterruptions" render={({ field }) => (
-                      <FormItem className="space-y-2">
-                        <FormLabel className={LABEL}>Allow Interruptions</FormLabel>
+                <div className="grid gap-5 md:grid-cols-2">
+                  <FormField control={form.control as any} name="name" render={({ field }) => (
+                    <FormItem className="space-y-2">
+                      <FormLabel className={LABEL}>Internal Persona Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="e.g. Lead Qualification Expert" className={INPUT} {...field} />
+                      </FormControl>
+                      <FormDescription className={DESC}>Visible only in administrative view.</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+
+                  <FormField control={form.control as any} name="language" render={({ field }) => (
+                    <FormItem className="space-y-2">
+                      <FormLabel className={LABEL}>Primary Dialect</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
                         <FormControl>
-                          <div className="flex h-11 items-center justify-between px-4 rounded-[12px] bg-[#f7f7f5] border border-transparent">
-                            <span className="text-[14px] font-[450] text-black">
-                              {field.value ? "Enabled" : "Disabled"}
-                            </span>
-                            <Switch checked={field.value} onCheckedChange={field.onChange} className="scale-90" />
-                          </div>
+                          <SelectTrigger className={INPUT}>
+                            <SelectValue placeholder="Select language" />
+                          </SelectTrigger>
                         </FormControl>
-                        <FormDescription className={DESC}>Let callers speak mid-sentence.</FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )} />
-                 </div>
+                        <SelectContent className="rounded-lg border-[#e6e6e6]">
+                          <SelectItem value="en-US">English (United States)</SelectItem>
+                          <SelectItem value="en-GB">English (United Kingdom)</SelectItem>
+                          <SelectItem value="hi-IN">Hindi (India)</SelectItem>
+                          <SelectItem value="es-ES">Spanish</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription className={DESC}>The primary dialect/accent spoken.</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+
+                  <FormField control={form.control as any} name="voice" render={({ field }) => (
+                    <FormItem className="space-y-2">
+                      <FormLabel className={LABEL}>Synthesis Engine</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger className={INPUT}>
+                            <SelectValue placeholder="Select a voice model" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent className="rounded-xl border-hairline shadow-lg">
+                          {filteredVoices.map((v) => (
+                            <SelectItem key={v.value} value={v.value}>{v.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormDescription className={DESC}>The voice profile of the agent.</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+
+                  <FormField control={form.control as any} name="allowInterruptions" render={({ field }) => (
+                    <FormItem className="space-y-2">
+                      <FormLabel className={LABEL}>Allow Interruptions</FormLabel>
+                      <FormControl>
+                        <div className="flex h-11 items-center justify-between px-4 rounded-[12px] bg-[#f7f7f5] border border-transparent">
+                          <span className="text-[14px] font-[450] text-black">
+                            {field.value ? "Enabled" : "Disabled"}
+                          </span>
+                          <Switch checked={field.value} onCheckedChange={field.onChange} className="scale-90" />
+                        </div>
+                      </FormControl>
+                      <FormDescription className={DESC}>Let callers speak mid-sentence.</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                </div>
               </div>
             )}
 
-            {/* Step 2: General Business Information */}
+            {/* Step 2: Business Profile & Operations */}
             {currentStep === 2 && (
-              <div className="space-y-6">
-                <SectionHeader 
-                  icon={<Building2 className="h-5 w-5 text-black" />} 
-                  title="General Business Information" 
-                  subtitle="Provide essential organizational and contact details" 
-                />
-                <div className="grid gap-5 md:grid-cols-2">
-                  <FormInput label="Business Name" name="businessName" placeholder="Acme Corporation" form={form} />
-                  
-                  <div className="flex flex-col gap-3">
-                    <FormField
-                      control={form.control as any}
-                      name="industry"
-                      render={({ field }) => (
-                        <FormItem className="space-y-2 flex flex-col">
-                          <FormLabel className={LABEL}>Industry / Business Type</FormLabel>
-                          <Select
-                            onValueChange={handleNicheChange}
-                            value={selectedNicheOption}
-                          >
-                            <FormControl>
-                              <SelectTrigger className={INPUT}>
-                                <SelectValue placeholder="Select industry / business type" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent className="rounded-lg border-[#e6e6e6]">
-                              {niches.map((nicheName) => (
-                                <SelectItem key={nicheName} value={nicheName}>
-                                  {nicheName}
-                                </SelectItem>
-                              ))}
-                              <SelectItem value="Other">Other</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    
-                    {selectedNicheOption === "Other" && (
-                      <div className="space-y-2 flex flex-col animate-in fade-in duration-200">
-                        <Label className={LABEL}>Specify Custom Business Type</Label>
-                        <Input
-                          placeholder="e.g. SaaS, E-commerce, Medical, etc."
-                          className={INPUT}
-                          value={customNiche}
-                          onChange={handleCustomNicheChange}
-                        />
-                        {form.formState.errors.industry?.message && (
-                          <span className="text-[11px] font-semibold text-rose-500 italic mt-1">
-                            {form.formState.errors.industry.message as string}
-                          </span>
+              <div className="space-y-8">
+                {/* Part A: General Profile Info */}
+                <div className="space-y-6">
+                  <SectionHeader
+                    icon={<Building2 className="h-5 w-5 text-black" />}
+                    title="Business Details"
+                    subtitle="Provide essential organizational and contact details"
+                  />
+                  <div className="grid gap-5 md:grid-cols-2">
+                    <FormInput label="Business Name" name="businessName" placeholder="Acme Corporation" form={form} />
+
+                    <div className="flex flex-col gap-3">
+                      <FormField
+                        control={form.control as any}
+                        name="industry"
+                        render={({ field }) => (
+                          <FormItem className="space-y-2 flex flex-col">
+                            <FormLabel className={LABEL}>Industry / Business Type</FormLabel>
+                            <Select
+                              onValueChange={handleNicheChange}
+                              value={selectedNicheOption}
+                            >
+                              <FormControl>
+                                <SelectTrigger className={INPUT}>
+                                  <SelectValue placeholder="Select industry / business type" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent className="rounded-lg border-[#e6e6e6]">
+                                {niches.map((nicheName) => (
+                                  <SelectItem key={nicheName} value={nicheName}>
+                                    {nicheName}
+                                  </SelectItem>
+                                ))}
+                                <SelectItem value="Other">Other</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
                         )}
-                      </div>
-                    )}
+                      />
+
+                      {selectedNicheOption === "Other" && (
+                        <div className="space-y-2 flex flex-col animate-in fade-in duration-200">
+                          <Label className={LABEL}>Specify Custom Business Type</Label>
+                          <Input
+                            placeholder="e.g. SaaS, E-commerce, Medical, etc."
+                            className={INPUT}
+                            value={customNiche}
+                            onChange={handleCustomNicheChange}
+                          />
+                          {form.formState.errors.industry?.message && (
+                            <span className="text-[11px] font-semibold text-rose-500 italic mt-1">
+                              {form.formState.errors.industry.message as string}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <FormTextarea
+                    label="What Does Your Business Do?"
+                    name="businessDescription"
+                    placeholder="We specialize in custom CRM software development, providing 24/7 technical support and integrations..."
+                    form={form}
+                  />
+                  <div className="grid gap-5 md:grid-cols-2">
+                    <FormInput label="Website Address (URL)" name="websiteUrl" placeholder="https://acme.com" form={form} />
+                    <FormInput label="Business Address" name="businessAddress" placeholder="123, HSR Layout, Sector 6, Bengaluru, Karnataka 560102" form={form} />
+                    <FormInput label="Business Phone Number" name="businessPhone" placeholder="+91 98765-43210" form={form} />
+                    <FormInput label="Business Email" name="businessEmail" placeholder="support@acme.com" form={form} />
+                    <FormInput label="Hours of Operation" name="hoursOfOperation" placeholder="Mon-Fri 9AM-6PM IST" form={form} />
+                    <FormInput
+                      label="Areas You Serve"
+                      name="areasServed"
+                      placeholder="e.g., India / Maharashtra / Mumbai"
+                      helperText="Specify the geographic hierarchy your business serves: Country / State / City"
+                      form={form}
+                    />
+                    <FormInput label="Languages Supported" name="languagesSupported" placeholder="English, Hindi, Spanish" form={form} />
                   </div>
                 </div>
-                <FormTextarea 
-                  label="What Does Your Business Do?" 
-                  name="businessDescription" 
-                  placeholder="We specialize in custom CRM software development, providing 24/7 technical support and integrations..." 
-                  form={form} 
-                />
-                <div className="grid gap-5 md:grid-cols-2">
-                  <FormInput label="Website Address (URL)" name="websiteUrl" placeholder="https://acme.com" form={form} />
-                  <FormInput label="Business Address" name="businessAddress" placeholder="123, HSR Layout, Sector 6, Bengaluru, Karnataka 560102" form={form} />
-                  <FormInput label="Business Phone Number" name="businessPhone" placeholder="+91 98765-43210" form={form} />
-                  <FormInput label="Business Email" name="businessEmail" placeholder="support@acme.com" form={form} />
-                  <FormInput label="Hours of Operation" name="hoursOfOperation" placeholder="Mon-Fri 9AM-6PM IST" form={form} />
-                  <FormInput 
-                    label="Areas You Serve" 
-                    name="areasServed" 
-                    placeholder="e.g., India / Maharashtra / Mumbai" 
-                    helperText="Specify the geographic hierarchy your business serves: Country / State / City"
-                    form={form} 
-                  />
-                  <FormInput label="Languages Supported" name="languagesSupported" placeholder="English, Hindi, Spanish" form={form} />
-                </div>
-              </div>
-            )}
 
-            {/* Step 3: Services, Products & Pricing */}
-            {currentStep === 3 && (
-              <div className="space-y-6">
-                <SectionHeader 
-                  icon={<Package className="h-5 w-5 text-black" />} 
-                  title="Services, Products & Pricing" 
-                  subtitle="Configure catalog items the AI can promote and quote" 
-                />
-                
-                <div className="space-y-4">
-                  {serviceFields.length === 0 && (
-                    <div className="border border-dashed border-[#e6e6e6] rounded-[16px] p-8 text-center text-muted-foreground text-sm">
-                      No services/products configured yet. Click the button below to add your first item.
+                {/* Part B: Booking Settings */}
+                <div className="space-y-6 pt-6 border-t border-[#f1f1f1]">
+                  <SectionHeader
+                    icon={<CalendarCheck2 className="h-5 w-5 text-black" />}
+                    title="Booking & Actions"
+                    subtitle="Manage how the agent collects information or references links"
+                  />
+
+                  <div className="space-y-4">
+                    <Label className={LABEL}>Does your business require appointments?</Label>
+                    <RadioGroup
+                      defaultValue={form.getValues("requiresAppointments")}
+                      onValueChange={(val) => form.setValue("requiresAppointments", val as "yes" | "no")}
+                      className="flex gap-6 mt-1"
+                    >
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="yes" id="req-yes" />
+                        <Label htmlFor="req-yes" className="text-sm font-medium cursor-pointer">Yes</Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="no" id="req-no" />
+                        <Label htmlFor="req-no" className="text-sm font-medium cursor-pointer">No</Label>
+                      </div>
+                    </RadioGroup>
+                  </div>
+
+                  {watchAppointments === "yes" && (
+                    <div className="p-5 rounded-[16px] bg-[#f7f7f5] border border-transparent space-y-3">
+                      <Label className={LABEL}>If yes, information to collect from customer:</Label>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 pt-1">
+                        <FormCheckbox label="Name" name="appointmentInfoToCollect.name" form={form} />
+                        <FormCheckbox label="Phone Number" name="appointmentInfoToCollect.phone" form={form} />
+                        <FormCheckbox label="Email Address" name="appointmentInfoToCollect.email" form={form} />
+                        <FormCheckbox label="Preferred Date" name="appointmentInfoToCollect.preferredDate" form={form} />
+                        <FormCheckbox label="Preferred Time" name="appointmentInfoToCollect.preferredTime" form={form} />
+                        <FormCheckbox label="Physical Address" name="appointmentInfoToCollect.address" form={form} />
+                      </div>
+                      <div className="pt-2">
+                        <FormInput label="Other Details to Collect (Optional)" name="appointmentInfoToCollect.other" placeholder="e.g. GST Number, Vehicle Model" form={form} />
+                      </div>
                     </div>
                   )}
-                  {serviceFields.map((field, idx) => (
-                    <div key={field.id} className="relative p-5 rounded-[16px] bg-[#fcfcfc] border border-[#e6e6e6] space-y-4">
-                      <button
-                        type="button"
-                        onClick={() => removeService(idx)}
-                        className="absolute top-4 right-4 h-8 w-8 rounded-full hover:bg-rose-50 text-rose-500 flex items-center justify-center transition-colors"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                      <div className="font-mono text-[10px] text-muted-foreground uppercase">Service/Product #{idx + 1}</div>
-                      
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <FormInput label="Name" name={`servicesProducts.${idx}.name`} placeholder="e.g. Basic Plan Consultation" form={form} />
-                        <FormInput label="Price (Optional)" name={`servicesProducts.${idx}.price`} placeholder="e.g. ₹1,500 or ₹500/hour" form={form} />
+
+                  <div className="space-y-4">
+                    <Label className={LABEL}>Collect customer details for follow-up?</Label>
+                    <RadioGroup
+                      defaultValue={form.getValues("collectDetailsFollowup")}
+                      onValueChange={(val) => form.setValue("collectDetailsFollowup", val as "yes" | "no")}
+                      className="flex gap-6 mt-1"
+                    >
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="yes" id="col-yes" />
+                        <Label htmlFor="col-yes" className="text-sm font-medium cursor-pointer">Yes</Label>
                       </div>
-                      <FormTextarea label="Description" name={`servicesProducts.${idx}.description`} placeholder="Details about what is included, timeline, and scope..." form={form} />
-                      <FormInput label="Special Notes (Optional)" name={`servicesProducts.${idx}.notes`} placeholder="e.g. Requires a ₹500 deposit, available on weekends only" form={form} />
-                    </div>
-                  ))}
-                </div>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-10 rounded-full border-[#e6e6e6] hover:bg-[#f7f7f5] text-xs font-semibold gap-2 mt-2"
-                  onClick={() => appendService({ name: "", description: "", price: "", notes: "" })}
-                >
-                  <Plus className="h-4 w-4" />
-                  Add Service / Product
-                </Button>
-              </div>
-            )}
-
-            {/* Step 4: Booking, Orders & Customer Actions */}
-            {currentStep === 4 && (
-              <div className="space-y-6">
-                <SectionHeader 
-                  icon={<CalendarCheck2 className="h-5 w-5 text-black" />} 
-                  title="Booking, Orders & Customer Actions" 
-                  subtitle="Manage how the agent collects information or references links" 
-                />
-                
-                <div className="space-y-4">
-                  <Label className={LABEL}>Does your business require appointments?</Label>
-                  <RadioGroup
-                    defaultValue={form.getValues("requiresAppointments")}
-                    onValueChange={(val) => form.setValue("requiresAppointments", val as "yes" | "no")}
-                    className="flex gap-6 mt-1"
-                  >
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="yes" id="req-yes" />
-                      <Label htmlFor="req-yes" className="text-sm font-medium cursor-pointer">Yes</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="no" id="req-no" />
-                      <Label htmlFor="req-no" className="text-sm font-medium cursor-pointer">No</Label>
-                    </div>
-                  </RadioGroup>
-                </div>
-
-                {watchAppointments === "yes" && (
-                  <div className="p-5 rounded-[16px] bg-[#f7f7f5] border border-transparent space-y-3">
-                    <Label className={LABEL}>If yes, information to collect from customer:</Label>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4 pt-1">
-                      <FormCheckbox label="Name" name="appointmentInfoToCollect.name" form={form} />
-                      <FormCheckbox label="Phone Number" name="appointmentInfoToCollect.phone" form={form} />
-                      <FormCheckbox label="Email Address" name="appointmentInfoToCollect.email" form={form} />
-                      <FormCheckbox label="Preferred Date" name="appointmentInfoToCollect.preferredDate" form={form} />
-                      <FormCheckbox label="Preferred Time" name="appointmentInfoToCollect.preferredTime" form={form} />
-                      <FormCheckbox label="Physical Address" name="appointmentInfoToCollect.address" form={form} />
-                    </div>
-                    <div className="pt-2">
-                      <FormInput label="Other Details to Collect (Optional)" name="appointmentInfoToCollect.other" placeholder="e.g. GST Number, Vehicle Model" form={form} />
-                    </div>
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="no" id="col-no" />
+                        <Label htmlFor="col-no" className="text-sm font-medium cursor-pointer">No</Label>
+                      </div>
+                    </RadioGroup>
                   </div>
-                )}
 
-                <div className="space-y-4">
-                  <Label className={LABEL}>Collect customer details for follow-up?</Label>
-                  <RadioGroup
-                    defaultValue={form.getValues("collectDetailsFollowup")}
-                    onValueChange={(val) => form.setValue("collectDetailsFollowup", val as "yes" | "no")}
-                    className="flex gap-6 mt-1"
-                  >
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="yes" id="col-yes" />
-                      <Label htmlFor="col-yes" className="text-sm font-medium cursor-pointer">Yes</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="no" id="col-no" />
-                      <Label htmlFor="col-no" className="text-sm font-medium cursor-pointer">No</Label>
-                    </div>
-                  </RadioGroup>
+                  <FormInput label="Website / Booking Page Link" name="bookingLink" placeholder="https://calendly.com/acme" form={form} />
+
+                  <FormTextarea
+                    label="Action after collecting info"
+                    name="postCollectionAction"
+                    placeholder="Let the caller know we will text them a booking confirmation, and push this lead data to Zapier webhook..."
+                    form={form}
+                  />
                 </div>
-
-                <FormInput label="Website / Booking Page Link" name="bookingLink" placeholder="https://calendly.com/acme" form={form} />
-                
-                <FormTextarea 
-                  label="Action after collecting info" 
-                  name="postCollectionAction" 
-                  placeholder="Let the caller know we will text them a booking confirmation, and push this lead data to Zapier webhook..." 
-                  form={form} 
-                />
               </div>
             )}
 
-            {/* Step 5: Frequently Asked Questions */}
-            {currentStep === 5 && (
-              <div className="space-y-6">
-                <SectionHeader 
-                  icon={<HelpCircle className="h-5 w-5 text-black" />} 
-                  title="Frequently Asked Questions" 
-                  subtitle="Populate static knowledge so the agent handles objections smoothly" 
-                />
-                
-                <div className="space-y-4">
-                  {faqFields.map((field, idx) => (
-                    <div key={field.id} className="relative p-5 rounded-[16px] bg-[#fcfcfc] border border-[#e6e6e6] space-y-4">
-                      <button
-                        type="button"
-                        onClick={() => removeFaq(idx)}
-                        className="absolute top-4 right-4 h-8 w-8 rounded-full hover:bg-rose-50 text-rose-500 flex items-center justify-center transition-colors"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                      <div className="font-mono text-[10px] text-muted-foreground uppercase">Question #{idx + 1}</div>
-                      
-                      <FormInput label="Question" name={`faqs.${idx}.question`} placeholder="e.g. What is your refund policy?" form={form} />
-                      <FormTextarea label="Answer" name={`faqs.${idx}.answer`} placeholder="Provide a concise, direct answer suited for text-to-speech voice playback..." form={form} />
-                    </div>
-                  ))}
-                </div>
+            {/* Step 3: Knowledge & Engagement */}
+            {currentStep === 3 && (
+              <div className="space-y-8">
+                {/* Part A: Catalog Info */}
+                <div className="space-y-6">
+                  <SectionHeader
+                    icon={<Package className="h-5 w-5 text-black" />}
+                    title="Services, Products & Pricing"
+                    subtitle="Configure catalog items the AI can promote and quote"
+                  />
 
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-10 rounded-full border-[#e6e6e6] hover:bg-[#f7f7f5] text-xs font-semibold gap-2 mt-2"
-                  onClick={() => appendFaq({ question: "", answer: "" })}
-                >
-                  <Plus className="h-4 w-4" />
-                  Add FAQ
-                </Button>
-              </div>
-            )}
-
-            {/* Step 6: Offers, Discounts & Promotions */}
-            {currentStep === 6 && (
-              <div className="space-y-6">
-                <SectionHeader 
-                  icon={<Percent className="h-5 w-5 text-black" />} 
-                  title="Offers, Discounts & Promotions" 
-                  subtitle="Provide campaign or active promotional variables" 
-                />
-
-                <div className="space-y-4">
-                  <Label className={LABEL}>Does your business currently have active promotions?</Label>
-                  <RadioGroup
-                    defaultValue={form.getValues("hasPromotions")}
-                    onValueChange={(val) => form.setValue("hasPromotions", val as "yes" | "no")}
-                    className="flex gap-6 mt-1"
-                  >
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="yes" id="promo-yes" />
-                      <Label htmlFor="promo-yes" className="text-sm font-medium cursor-pointer">Yes</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="no" id="promo-no" />
-                      <Label htmlFor="promo-no" className="text-sm font-medium cursor-pointer">No</Label>
-                    </div>
-                  </RadioGroup>
-                </div>
-
-                {watchPromotions === "yes" && (
-                  <div className="space-y-4 pt-2">
-                    {promoFields.length === 0 && (
+                  <div className="space-y-4">
+                    {serviceFields.length === 0 && (
                       <div className="border border-dashed border-[#e6e6e6] rounded-[16px] p-8 text-center text-muted-foreground text-sm">
-                        No promotions configured yet. Click below to add one.
+                        No services/products configured yet. Click the button below to add your first item.
                       </div>
                     )}
-                    {promoFields.map((field, idx) => (
+                    {serviceFields.map((field, idx) => (
                       <div key={field.id} className="relative p-5 rounded-[16px] bg-[#fcfcfc] border border-[#e6e6e6] space-y-4">
                         <button
                           type="button"
-                          onClick={() => removePromo(idx)}
+                          onClick={() => removeService(idx)}
                           className="absolute top-4 right-4 h-8 w-8 rounded-full hover:bg-rose-50 text-rose-500 flex items-center justify-center transition-colors"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
-                        <div className="font-mono text-[10px] text-muted-foreground uppercase">Promotion #{idx + 1}</div>
+                        <div className="font-mono text-[10px] text-muted-foreground uppercase">Service/Product #{idx + 1}</div>
 
                         <div className="grid gap-4 md:grid-cols-2">
-                          <FormInput label="Offer Name" name={`promotions.${idx}.name`} placeholder="e.g. Festive Special 20% Off" form={form} />
-                          <FormInput label="Offer Expiry Date" name={`promotions.${idx}.expiryDate`} placeholder="e.g. October 31st, 2026" form={form} />
+                          <FormInput label="Name" name={`servicesProducts.${idx}.name`} placeholder="e.g. Basic Plan Consultation" form={form} />
+                          <FormInput label="Price (Optional)" name={`servicesProducts.${idx}.price`} placeholder="e.g. ₹1,500 or ₹500/hour" form={form} />
                         </div>
-                        <FormTextarea label="Offer Details" name={`promotions.${idx}.details`} placeholder="What does the discount apply to? Minimum order sizes? Code name?" form={form} />
-                        <FormTextarea label="Terms & Conditions (Optional)" name={`promotions.${idx}.terms`} placeholder="e.g. Cannot be combined with other offers" form={form} />
+                        <FormTextarea label="Description" name={`servicesProducts.${idx}.description`} placeholder="Details about what is included, timeline, and scope..." form={form} />
+                        <FormInput label="Special Notes (Optional)" name={`servicesProducts.${idx}.notes`} placeholder="e.g. Requires a ₹500 deposit, available on weekends only" form={form} />
                       </div>
                     ))}
-                    
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-10 rounded-full border-[#e6e6e6] hover:bg-[#f7f7f5] text-xs font-semibold gap-2 mt-2"
-                      onClick={() => appendPromo({ name: "", details: "", expiryDate: "", terms: "" })}
-                    >
-                      <Plus className="h-4 w-4" />
-                      Add Promotion
-                    </Button>
                   </div>
-                )}
-              </div>
-            )}
 
-            {/* Step 7: Customer Qualification Questions */}
-            {currentStep === 7 && (
-              <div className="space-y-6">
-                <SectionHeader 
-                  icon={<ClipboardCheck className="h-5 w-5 text-black" />} 
-                  title="Customer Qualification Questions" 
-                  subtitle="Specific query slots the agent can use to pre-qualify leads" 
-                />
-                
-                <div className="p-5 rounded-[16px] bg-[#f7f7f5] space-y-4">
-                  <p className="text-xs text-muted-foreground italic leading-relaxed">
-                    Provide up to 5 questions you want the AI voice agent to ask callers to qualify their needs (e.g. budget, timeframe, urgency). Leave blank if not required.
-                  </p>
-                  
-                  {Array.from({ length: 5 }).map((_, idx) => (
-                    <div key={idx} className="space-y-2">
-                      <Label className={LABEL}>Qualification Question {idx + 1}</Label>
-                      <Input
-                        placeholder={`e.g. ${
-                          idx === 0 
-                            ? "What is your typical monthly budget for this service?" 
-                            : idx === 1 
-                              ? "How soon are you looking to get started?" 
-                              : "Write question details..."
-                        }`}
-                        className={INPUT}
-                        {...form.register(`qualificationQuestions.${idx}`)}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Step 8: Rules & Boundaries */}
-            {currentStep === 8 && (
-              <div className="space-y-6">
-                <SectionHeader 
-                  icon={<ShieldAlert className="h-5 w-5 text-black" />} 
-                  title="Rules & Boundaries" 
-                  subtitle="Enforce constraints, topics to avoid, and escalation transfer parameters" 
-                />
-                
-                <div className="grid gap-5 md:grid-cols-2">
-                  <FormInput label="Escalation Phone (Transfer Direct)" name="escalationPhone" placeholder="+91 98765-43210" form={form} />
-                  <FormInput label="Escalation Email" name="escalationEmail" placeholder="escalation@acme.com" form={form} />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 rounded-full border-[#e6e6e6] hover:bg-[#f7f7f5] text-xs font-semibold gap-2 mt-2"
+                    onClick={() => appendService({ name: "", description: "", price: "", notes: "" })}
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add Service / Product
+                  </Button>
                 </div>
 
-                <FormTextarea 
-                  label="Situations Where AI Should Transfer To A Human" 
-                  name="humanTransferSituations" 
-                  placeholder="If the caller asks for refunds, files a formal complaint, requests custom pricing negotiations, or repeatedly asks to speak to a manager..." 
-                  form={form} 
-                />
-
-                <FormTextarea 
-                  label="Things the AI Must NEVER Say" 
-                  name="mustNeverSay" 
-                  placeholder="Do not promise exact delivery times, do not share employee cell numbers, and never say we offer 100% money-back guarantees..." 
-                  form={form} 
-                />
-
-                <FormTextarea 
-                  label="Topics the AI Should Avoid Discussing" 
-                  name="topicsToAvoid" 
-                  placeholder="Legal disputes, competitor pricing comparisons, and political or personal viewpoints..." 
-                  form={form} 
-                />
-              </div>
-            )}
-
-            {/* Step 9: AI Personality & Communication Style */}
-            {currentStep === 9 && (
-              <div className="space-y-6">
-                <SectionHeader 
-                  icon={<Sparkles className="h-5 w-5 text-black" />} 
-                  title="AI Personality & Communication Style" 
-                  subtitle="Tailor how the agent sounds and handles greetings/closings" 
-                />
-
-                <div className="space-y-3">
-                  <Label className={LABEL}>Select Tone Style(s)</Label>
-                  <Controller
-                    control={form.control}
-                    name="toneStyles"
-                    render={({ field }) => {
-                      const rawValues = field.value || [];
-                      const currentTones = Array.isArray(rawValues)
-                        ? rawValues
-                        : typeof rawValues === "string"
-                          ? (rawValues as string).split(",").map(t => t.trim()).filter(Boolean)
-                          : [];
-
-                      return (
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-1">
-                          {TONE_OPTIONS.map((tone) => {
-                            const isChecked = currentTones.includes(tone);
-                            
-                            return (
-                              <div 
-                                key={tone} 
-                                onClick={() => {
-                                  const updated = isChecked 
-                                    ? currentTones.filter(t => t !== tone)
-                                    : [...currentTones, tone];
-                                  field.onChange(updated);
-                                }}
-                                className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all duration-200 cursor-pointer select-none ${
-                                  isChecked 
-                                    ? "border-black bg-black/5 shadow-xs" 
-                                    : "border-[#e6e6e6] bg-canvas-soft hover:border-black/30"
-                                }`}
-                              >
-                                <div className={`h-4 w-4 rounded-sm border shrink-0 flex items-center justify-center transition-all ${
-                                  isChecked 
-                                    ? "bg-black border-black text-white" 
-                                    : "border-neutral-300 bg-white"
-                                }`}>
-                                  {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
-                                </div>
-                                <span className="text-xs font-semibold text-foreground select-none">{tone}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      );
-                    }}
+                {/* Part B: FAQs */}
+                <div className="space-y-6 pt-6 border-t border-[#f1f1f1]">
+                  <SectionHeader
+                    icon={<HelpCircle className="h-5 w-5 text-black" />}
+                    title="Frequently Asked Questions"
+                    subtitle="Populate static knowledge so the agent handles objections smoothly"
                   />
-                  
-                  <div className="pt-2">
-                    <FormInput label="Other Tone Style" name="otherToneStyle" placeholder="e.g. Quirky, Playful, Empathetic" form={form} />
+
+                  <div className="space-y-4">
+                    {faqFields.map((field, idx) => (
+                      <div key={field.id} className="relative p-5 rounded-[16px] bg-[#fcfcfc] border border-[#e6e6e6] space-y-4">
+                        <button
+                          type="button"
+                          onClick={() => removeFaq(idx)}
+                          className="absolute top-4 right-4 h-8 w-8 rounded-full hover:bg-rose-50 text-rose-500 flex items-center justify-center transition-colors"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                        <div className="font-mono text-[10px] text-muted-foreground uppercase">Question #{idx + 1}</div>
+
+                        <FormInput label="Question" name={`faqs.${idx}.question`} placeholder="e.g. What is your refund policy?" form={form} />
+                        <FormTextarea label="Answer" name={`faqs.${idx}.answer`} placeholder="Provide a concise, direct answer suited for text-to-speech voice playback..." form={form} />
+                      </div>
+                    ))}
                   </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 rounded-full border-[#e6e6e6] hover:bg-[#f7f7f5] text-xs font-semibold gap-2 mt-2"
+                    onClick={() => appendFaq({ question: "", answer: "" })}
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add FAQ
+                  </Button>
                 </div>
 
-                <FormTextarea 
-                  label="Preferred Greeting Message" 
-                  name="greetingMessage" 
-                  placeholder="e.g. Thanks for calling Acme Support! This is VoicePilot, how can I help you today?" 
-                  form={form} 
-                />
+                {/* Part C: Promotions */}
+                <div className="space-y-6 pt-6 border-t border-[#f1f1f1]">
+                  <SectionHeader
+                    icon={<Percent className="h-5 w-5 text-black" />}
+                    title="Offers & Promotions"
+                    subtitle="Provide campaign or active promotional variables"
+                  />
 
-                <FormTextarea 
-                  label="Preferred Closing Message" 
-                  name="closingMessage" 
-                  placeholder="e.g. Thank you for your time, have a wonderful rest of your day! Goodbye." 
-                  form={form} 
-                />
+                  <div className="space-y-4">
+                    <Label className={LABEL}>Does your business currently have active promotions?</Label>
+                    <RadioGroup
+                      defaultValue={form.getValues("hasPromotions")}
+                      onValueChange={(val) => form.setValue("hasPromotions", val as "yes" | "no")}
+                      className="flex gap-6 mt-1"
+                    >
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="yes" id="promo-yes" />
+                        <Label htmlFor="promo-yes" className="text-sm font-medium cursor-pointer">Yes</Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="no" id="promo-no" />
+                        <Label htmlFor="promo-no" className="text-sm font-medium cursor-pointer">No</Label>
+                      </div>
+                    </RadioGroup>
+                  </div>
 
-                <FormTextarea 
-                  label="Specific Communication Instructions" 
-                  name="communicationInstructions" 
-                  placeholder="Speak slowly, spell out product names if asked, and always verify their name before booking a date..." 
-                  form={form} 
-                />
+                  {watchPromotions === "yes" && (
+                    <div className="space-y-4 pt-2">
+                      {promoFields.length === 0 && (
+                        <div className="border border-dashed border-[#e6e6e6] rounded-[16px] p-8 text-center text-muted-foreground text-sm">
+                          No promotions configured yet. Click below to add one.
+                        </div>
+                      )}
+                      {promoFields.map((field, idx) => (
+                        <div key={field.id} className="relative p-5 rounded-[16px] bg-[#fcfcfc] border border-[#e6e6e6] space-y-4">
+                          <button
+                            type="button"
+                            onClick={() => removePromo(idx)}
+                            className="absolute top-4 right-4 h-8 w-8 rounded-full hover:bg-rose-50 text-rose-500 flex items-center justify-center transition-colors"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                          <div className="font-mono text-[10px] text-muted-foreground uppercase">Promotion #{idx + 1}</div>
+
+                          <div className="grid gap-4 md:grid-cols-2">
+                            <FormInput label="Offer Name" name={`promotions.${idx}.name`} placeholder="e.g. Festive Special 20% Off" form={form} />
+                            <FormInput label="Offer Expiry Date" name={`promotions.${idx}.expiryDate`} placeholder="e.g. October 31st, 2026" form={form} />
+                          </div>
+                          <FormTextarea label="Offer Details" name={`promotions.${idx}.details`} placeholder="What does the discount apply to? Minimum order sizes? Code name?" form={form} />
+                          <FormTextarea label="Terms & Conditions (Optional)" name={`promotions.${idx}.terms`} placeholder="e.g. Cannot be combined with other offers" form={form} />
+                        </div>
+                      ))}
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-10 rounded-full border-[#e6e6e6] hover:bg-[#f7f7f5] text-xs font-semibold gap-2 mt-2"
+                        onClick={() => appendPromo({ name: "", details: "", expiryDate: "", terms: "" })}
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add Promotion
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Part D: Qualification */}
+                <div className="space-y-6 pt-6 border-t border-[#f1f1f1]">
+                  <SectionHeader
+                    icon={<ClipboardCheck className="h-5 w-5 text-black" />}
+                    title="Customer Qualification Questions"
+                    subtitle="Specific query slots the agent can use to pre-qualify leads"
+                  />
+
+                  <div className="p-5 rounded-[16px] bg-[#f7f7f5] space-y-4">
+                    <p className="text-xs text-muted-foreground italic leading-relaxed">
+                      Provide up to 5 questions you want the AI voice agent to ask callers to qualify their needs (e.g. budget, timeframe, urgency). Leave blank if not required.
+                    </p>
+
+                    {Array.from({ length: 5 }).map((_, idx) => (
+                      <div key={idx} className="space-y-2">
+                        <Label className={LABEL}>Qualification Question {idx + 1}</Label>
+                        <Input
+                          placeholder={`e.g. ${idx === 0
+                            ? "What is your typical monthly budget for this service?"
+                            : idx === 1
+                              ? "How soon are you looking to get started?"
+                              : "Write question details..."
+                            }`}
+                          className={INPUT}
+                          {...form.register(`qualificationQuestions.${idx}`)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
-            {/* Step 10: Additional Business Information & Final Notes */}
-            {currentStep === 10 && (
-              <div className="space-y-6">
-                <SectionHeader 
-                  icon={<FileText className="h-5 w-5 text-black" />} 
-                  title="Additional Business Information & Final Notes" 
-                  subtitle="Review details and submit profile config" 
-                />
+            {/* Step 4: Agent Behavior & Policies */}
+            {currentStep === 4 && (
+              <div className="space-y-8">
+                {/* Part A: Guardrails & Boundaries */}
+                <div className="space-y-6">
+                  <SectionHeader
+                    icon={<ShieldAlert className="h-5 w-5 text-black" />}
+                    title="Rules & Boundaries"
+                    subtitle="Enforce constraints, topics to avoid, and escalation transfer parameters"
+                  />
 
-                <FormTextarea 
-                  label="Additional Information (Optional)" 
-                  name="additionalInfo" 
-                  placeholder="Any special details, company policies, or unique constraints not mentioned in previous steps..." 
-                  form={form} 
-                />
+                  <div className="grid gap-5 md:grid-cols-2">
+                    <FormInput label="Escalation Phone (Transfer Direct)" name="escalationPhone" placeholder="+91 98765-43210" form={form} />
+                    <FormInput label="Escalation Email" name="escalationEmail" placeholder="escalation@acme.com" form={form} />
+                  </div>
 
-                <FormTextarea 
-                  label="Anything else to know (Optional)" 
-                  name="finalNotes" 
-                  placeholder="Miscellaneous constraints, context on how your staff works..." 
-                  form={form} 
-                />
+                  <FormTextarea
+                    label="Situations Where AI Should Transfer To A Human"
+                    name="humanTransferSituations"
+                    placeholder="If the caller asks for refunds, files a formal complaint, requests custom pricing negotiations, or repeatedly asks to speak to a manager..."
+                    form={form}
+                  />
 
-                {/* Complete Confirmation Panel */}
-                <div className="p-6 rounded-[20px] border border-emerald-100 bg-emerald-50/50 flex flex-col sm:flex-row items-center gap-4">
-                  <CheckCircle2 className="h-10 w-10 text-emerald-600 shrink-0" />
-                  <div className="space-y-1 text-center sm:text-left">
-                    <h4 className="text-sm font-bold text-emerald-800">You are all set!</h4>
-                    <p className="text-xs text-emerald-700/80 leading-relaxed">
-                      Click "Save & Deploy Voice Profile" below to compile configurations. This will write direct mappings to the Supabase metadata column and recompile instructions in real-time.
-                    </p>
+                  <FormTextarea
+                    label="Things the AI Must NEVER Say"
+                    name="mustNeverSay"
+                    placeholder="Do not promise exact delivery times, do not share employee cell numbers, and never say we offer 100% money-back guarantees..."
+                    form={form}
+                  />
+
+                  <FormTextarea
+                    label="Topics the AI Should Avoid Discussing"
+                    name="topicsToAvoid"
+                    placeholder="Legal disputes, competitor pricing comparisons, and political or personal viewpoints..."
+                    form={form}
+                  />
+                </div>
+
+                {/* Part B: Style & Personality */}
+                <div className="space-y-6 pt-6 border-t border-[#f1f1f1]">
+                  <SectionHeader
+                    icon={<Sparkles className="h-5 w-5 text-black" />}
+                    title="AI Personality & Communication Style"
+                    subtitle="Tailor how the agent sounds and handles greetings/closings"
+                  />
+
+                  <div className="space-y-3">
+                    <Label className={LABEL}>Select Tone Style(s)</Label>
+                    <Controller
+                      control={form.control}
+                      name="toneStyles"
+                      render={({ field }) => {
+                        const rawValues = field.value || [];
+                        const currentTones = Array.isArray(rawValues)
+                          ? rawValues
+                          : typeof rawValues === "string"
+                            ? (rawValues as string).split(",").map(t => t.trim()).filter(Boolean)
+                            : [];
+
+                        return (
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-1">
+                            {TONE_OPTIONS.map((tone) => {
+                              const isChecked = currentTones.includes(tone);
+
+                              return (
+                                <div
+                                  key={tone}
+                                  onClick={() => {
+                                    const updated = isChecked
+                                      ? currentTones.filter(t => t !== tone)
+                                      : [...currentTones, tone];
+                                    field.onChange(updated);
+                                  }}
+                                  className={`flex items-center gap-3 p-3 rounded-xl border-2 transition-all duration-200 cursor-pointer select-none ${isChecked
+                                    ? "border-black bg-black/5 shadow-xs"
+                                    : "border-[#e6e6e6] bg-canvas-soft hover:border-black/30"
+                                    }`}
+                                >
+                                  <div className={`h-4 w-4 rounded-sm border shrink-0 flex items-center justify-center transition-all ${isChecked
+                                    ? "bg-black border-black text-white"
+                                    : "border-neutral-300 bg-white"
+                                    }`}>
+                                    {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
+                                  </div>
+                                  <span className="text-xs font-semibold text-foreground select-none">{tone}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      }}
+                    />
+
+                    <div className="pt-2">
+                      <FormInput label="Other Tone Style" name="otherToneStyle" placeholder="e.g. Quirky, Playful, Empathetic" form={form} />
+                    </div>
+                  </div>
+
+                  <FormTextarea
+                    label="Preferred Greeting Message"
+                    name="greetingMessage"
+                    placeholder="e.g. Thanks for calling Acme Support! This is VoicePilot, how can I help you today?"
+                    form={form}
+                  />
+
+                  <FormTextarea
+                    label="Preferred Closing Message"
+                    name="closingMessage"
+                    placeholder="e.g. Thank you for your time, have a wonderful rest of your day! Goodbye."
+                    form={form}
+                  />
+
+                  <FormTextarea
+                    label="Specific Communication Instructions"
+                    name="communicationInstructions"
+                    placeholder="Speak slowly, spell out product names if asked, and always verify their name before booking a date..."
+                    form={form}
+                  />
+                </div>
+
+                {/* Part C: Final Notes */}
+                <div className="space-y-6 pt-6 border-t border-[#f1f1f1]">
+                  <SectionHeader
+                    icon={<FileText className="h-5 w-5 text-black" />}
+                    title="Additional Context & Notes"
+                    subtitle="Review details and submit profile config"
+                  />
+
+                  <FormTextarea
+                    label="Additional Information (Optional)"
+                    name="additionalInfo"
+                    placeholder="Any special details, company policies, or unique constraints not mentioned in previous steps..."
+                    form={form}
+                  />
+
+                  <FormTextarea
+                    label="Anything else to know (Optional)"
+                    name="finalNotes"
+                    placeholder="Miscellaneous constraints, context on how your staff works..."
+                    form={form}
+                  />
+
+                  <div className="p-6 rounded-[20px] border border-emerald-100 bg-emerald-50/50 flex flex-col sm:flex-row items-center gap-4">
+                    <CheckCircle2 className="h-10 w-10 text-emerald-600 shrink-0" />
+                    <div className="space-y-1 text-center sm:text-left">
+                      <h4 className="text-sm font-bold text-emerald-800">You are all set!</h4>
+                      <p className="text-xs text-emerald-700/80 leading-relaxed">
+                        Click "Save & Deploy Voice Profile" below to compile configurations. This will write direct mappings to the Supabase metadata column and recompile instructions in real-time.
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1525,7 +1484,7 @@ function CreateAgentPage() {
                 <ChevronLeft className="h-4 w-4 mr-1.5" />
                 Back
               </Button>
-              
+
               <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
                 {SKIP_STEPS.includes(currentStep) && (
                   <Button
@@ -1589,7 +1548,6 @@ function SectionHeader({ icon, title, subtitle }: { icon: ReactNode; title: stri
   )
 }
 
-/* ── Input Field Helper ── */
 function FormInput({ label, name, placeholder, form, helperText }: { label: string; name: string; placeholder: string; form: any; helperText?: string }) {
   const { register, formState: { errors } } = form;
   const error = errors[name]?.message || name.split('.').reduce((acc: any, key: string) => acc?.[key], errors)?.message;
@@ -1604,7 +1562,6 @@ function FormInput({ label, name, placeholder, form, helperText }: { label: stri
   );
 }
 
-/* ── Textarea Field Helper ── */
 function FormTextarea({ label, name, placeholder, form }: { label: string; name: string; placeholder: string; form: any }) {
   const { register, formState: { errors } } = form;
   const error = errors[name]?.message || name.split('.').reduce((acc: any, key: string) => acc?.[key], errors)?.message;
@@ -1618,7 +1575,6 @@ function FormTextarea({ label, name, placeholder, form }: { label: string; name:
   );
 }
 
-/* ── Checkbox Helper ── */
 function FormCheckbox({ label, name, form }: { label: string; name: string; form: any }) {
   return (
     <Controller
@@ -1627,19 +1583,17 @@ function FormCheckbox({ label, name, form }: { label: string; name: string; form
       render={({ field }) => {
         const isChecked = !!field.value;
         return (
-          <div 
+          <div
             onClick={() => field.onChange(!isChecked)}
-            className={`flex items-center gap-3 p-3 rounded-xl border transition-all duration-200 cursor-pointer select-none ${
-              isChecked 
-                ? "border-black bg-black/5" 
-                : "border-[#e6e6e6] bg-canvas-soft hover:border-black/30"
-            }`}
+            className={`flex items-center gap-3 p-3 rounded-xl border transition-all duration-200 cursor-pointer select-none ${isChecked
+              ? "border-black bg-black/5"
+              : "border-[#e6e6e6] bg-canvas-soft hover:border-black/30"
+              }`}
           >
-            <div className={`h-4 w-4 rounded-sm border shrink-0 flex items-center justify-center transition-all ${
-              isChecked 
-                ? "bg-black border-black text-white" 
-                : "border-neutral-300 bg-white"
-            }`}>
+            <div className={`h-4 w-4 rounded-sm border shrink-0 flex items-center justify-center transition-all ${isChecked
+              ? "bg-black border-black text-white"
+              : "border-neutral-300 bg-white"
+              }`}>
               {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
             </div>
             <span className="text-xs font-semibold text-foreground select-none">{label}</span>
