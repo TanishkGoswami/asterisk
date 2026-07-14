@@ -7,6 +7,22 @@ from typing import Tuple, List
 
 logger = logging.getLogger(__name__)
 
+# soxr: high-quality production resampler with proper sinc anti-aliasing filter.
+# Required on Python 3.13+ where audioop was removed from the stdlib.
+# Install: pip install soxr
+try:
+    import soxr
+    _SOXR_AVAILABLE = True
+except ImportError:
+    _SOXR_AVAILABLE = False
+    warnings.warn(
+        'soxr is not installed. PCM resampling will be low-quality (aliased). '
+        'Run: pip install soxr',
+        ImportWarning
+    )
+    logger.warning('soxr not available — install it with: pip install soxr')
+
+# audioop was removed in Python 3.13. Keep as a last-resort fallback for older envs.
 audioop = None
 try:
     import audioop
@@ -14,43 +30,52 @@ except ImportError:
     try:
         import audioop_lts as audioop
     except ImportError:
-        warnings.warn(
-            'audioop module is not available in the current Python environment. Resampling capabilities will fall back or be disabled.',
-            ImportWarning
-        )
-        logger.warning('audioop standard library and audioop-lts packages are missing. PCM resampling and conversion may fail.')
+        pass  # Will rely on soxr instead
 
 
 def resample_pcm16(input_bytes: bytes, from_rate: int, to_rate: int) -> bytes:
     """
-    Resample raw 16-bit mono PCM bytes from from_rate to to_rate using audioop.
+    Resample raw 16-bit signed mono PCM bytes from from_rate to to_rate.
+
+    Uses soxr (preferred) which applies a proper sinc anti-aliasing low-pass
+    filter before decimation, eliminating frequency fold-back/aliasing artifacts.
+    Falls back to audioop.ratecv() (Python <=3.12) if soxr is unavailable.
+
+    NOTE: The previous a[::2] array-slicing shortcut was intentionally removed.
+    It skips anti-aliasing entirely and causes audible pitch/clarity distortion.
     """
     if not input_bytes:
         return b''
     if from_rate == to_rate:
         return input_bytes
-    # High-quality state-free downsampling for 16kHz to 8kHz (slicing every second 16-bit sample)
-    if from_rate == 16000 and to_rate == 8000:
-        import array
+
+    # Ensure even byte length (each 16-bit sample = 2 bytes)
+    if len(input_bytes) % 2 != 0:
+        input_bytes = input_bytes[: len(input_bytes) - 1]
+
+    if _SOXR_AVAILABLE:
         try:
-            # Ensure length is even (each sample is 2 bytes)
-            if len(input_bytes) % 2 != 0:
-                input_bytes = input_bytes[:len(input_bytes) - (len(input_bytes) % 2)]
-            a = array.array('h', input_bytes)
-            return a[::2].tobytes()
+            import numpy as np
+            # soxr expects float32 input; convert from int16, resample, convert back
+            pcm_int16 = np.frombuffer(input_bytes, dtype=np.int16)
+            pcm_float = pcm_int16.astype(np.float32) / 32768.0
+            resampled_float = soxr.resample(pcm_float, from_rate, to_rate, quality='HQ')
+            resampled_int16 = np.clip(resampled_float * 32768.0, -32768, 32767).astype(np.int16)
+            return resampled_int16.tobytes()
         except Exception as e:
-            logger.error(f'Slicing downsample failed from 16k to 8k: {e}')
+            logger.error(f'soxr resample failed ({from_rate}->{to_rate}): {e} — falling back')
 
-    if audioop is None:
-        logger.warning('audioop not available. Returning raw bytes without resampling.')
-        return input_bytes
+    # Fallback: audioop.ratecv (available on Python <=3.12)
+    if audioop is not None:
+        try:
+            resampled, _ = audioop.ratecv(input_bytes, 2, 1, from_rate, to_rate, None)
+            return resampled
+        except Exception as e:
+            logger.error(f'audioop.ratecv failed ({from_rate}->{to_rate}): {e}')
+            return input_bytes
 
-    try:
-        resampled, _ = audioop.ratecv(input_bytes, 2, 1, from_rate, to_rate, None)
-        return resampled
-    except Exception as e:
-        logger.error(f'Error resampling PCM from {from_rate} to {to_rate}: {e}')
-        return input_bytes
+    logger.error('No resampler available (soxr missing, audioop missing). Returning raw bytes.')
+    return input_bytes
 
 
 def wav_to_pcm16(wav_bytes: bytes) -> Tuple[bytes, int]:
