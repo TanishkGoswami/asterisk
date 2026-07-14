@@ -136,6 +136,10 @@ class SarvamTTSService:
 
         if output_audio_codec == "pcm":
             payload["speech_sample_rate"] = 16000
+        elif output_audio_codec == "pcm_8k":
+            # Request 8kHz linear16 directly to avoid local resampling
+            payload["output_audio_codec"] = "linear16"
+            payload["speech_sample_rate"] = 8000
         elif output_audio_codec == "mulaw":
             payload["speech_sample_rate"] = 8000
         
@@ -299,6 +303,9 @@ class WarmSarvamConnection:
                     codec = self.output_audio_codec
                     if codec == "pcm":
                         codec = "linear16"
+                    elif codec == "pcm_8k":
+                        # 8kHz linear16: avoids the need for any local resampling
+                        codec = "linear16"
 
                     # Send configuration message first
                     config_msg = {
@@ -311,8 +318,10 @@ class WarmSarvamConnection:
                             "pace": self.pace
                         }
                     }
-                    if codec == "linear16":
+                    if self.output_audio_codec == "pcm":
                         config_msg["data"]["speech_sample_rate"] = 16000
+                    elif self.output_audio_codec == "pcm_8k":
+                        config_msg["data"]["speech_sample_rate"] = 8000
                     elif codec == "mulaw":
                         config_msg["data"]["speech_sample_rate"] = 8000
 
