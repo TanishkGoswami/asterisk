@@ -94,6 +94,10 @@ class AsteriskVoiceSession:
         self.stt_task = None
         self.greeting_active = False     # True while initial greeting is playing
         self.greeting_protected = False  # True during initial greeting playback to guard against barge-in
+        # Serialises all writer.write()+drain() calls across pipeline tasks.
+        # Prevents interleaved packets if a new pipeline starts while an old
+        # drain() is still in flight after barge-in cancellation.
+        self._writer_lock = asyncio.Lock()
 
         import inspect
         filepath = inspect.getfile(inspect.currentframe())
@@ -158,10 +162,10 @@ class AsteriskVoiceSession:
                 api_key=settings.sarvam_api_key or '',
                 speaker=speaker,
                 language='hi-IN',
-                output_audio_codec='pcm',
+                output_audio_codec='pcm_8k',  # Fix B: must match _synthesize_to_pcm_8k (8kHz direct)
                 pace=speed
             )
-            logger.info('[AsteriskVoiceSession] Pre-warming Sarvam TTS WS for telephony...')
+            logger.info('[AsteriskVoiceSession] Pre-warming Sarvam TTS WS for telephony (8kHz direct)...')
             asyncio.create_task(self.sarvam_tts_conn.connect())
             return
         else:
@@ -188,6 +192,8 @@ class AsteriskVoiceSession:
                 await self.llm_tts_task
             except asyncio.CancelledError:
                 pass
+            except Exception as e:
+                logger.error(f'[Pipeline] Error awaiting cancelled task: {e}')
 
         for task in self.tts_tasks:
             if not task.done():
@@ -197,6 +203,14 @@ class AsteriskVoiceSession:
 
         if self.tts_conn:
             await self.tts_conn.cancel()
+
+        # Lock barrier: if the cancelled task was mid write+drain when it got
+        # the CancelledError, that write+drain holds _writer_lock. Acquiring
+        # and immediately releasing here blocks until that lock is fully
+        # released — guaranteeing the socket buffer has settled before the
+        # caller spins up a new pipeline task that writes fresh frames.
+        async with self._writer_lock:
+            pass
 
         self.barge_in_event.clear()
         self._state = 'idle'
@@ -325,13 +339,14 @@ class AsteriskVoiceSession:
                 logger.info(f'[AudioSocket] Writer closed mid-playback at chunk {chunk_num}')
                 break
             packet = bytes([0x10]) + len(chunk).to_bytes(2, "big") + chunk
-            self.writer.write(packet)
-            try:
-                await self.writer.drain()
-            except Exception as e:
-                write_errors += 1
-                logger.error(f'[AudioSocket] Drain error at chunk {chunk_num}: {e}')
-                break
+            async with self._writer_lock:
+                self.writer.write(packet)
+                try:
+                    await self.writer.drain()
+                except Exception as e:
+                    write_errors += 1
+                    logger.error(f'[AudioSocket] Drain error at chunk {chunk_num}: {e}')
+                    break
             
             chunk_num += 1
             logger.info(
@@ -382,14 +397,17 @@ class AsteriskVoiceSession:
                     speaker = _map_sarvam_speaker(self.config.get('voice_id'), self.config.get('voice_gender'))
                     speed = float(self.config.get('voice_speed') or 0.95)
                     speed = max(0.5, min(2.0, speed))
+                    # Request 8kHz PCM directly from Sarvam to avoid any local resampling.
+                    # Sarvam's linear16 codec accepts speech_sample_rate=8000, returning
+                    # 8kHz 16-bit mono PCM which is exactly what AudioSocket needs.
                     self.sarvam_tts_conn = WarmSarvamConnection(
                         api_key=settings.sarvam_api_key or '',
                         speaker=speaker,
                         language='hi-IN',
-                        output_audio_codec='pcm',
+                        output_audio_codec='pcm_8k',  # triggers 8kHz request in WarmSarvamConnection
                         pace=speed
                     )
-                    logger.info('[TTS] Sarvam WS created (lazy init)')
+                    logger.info('[TTS] Sarvam WS created at 8kHz (lazy init, no resample needed)')
                     await self.sarvam_tts_conn.connect()
 
                 logger.info(f'[TTS] Sarvam speak() -> "{text[:80]}"')
@@ -402,21 +420,19 @@ class AsteriskVoiceSession:
                     logger.warning(f'[TTS] Sarvam returned zero bytes for chunk #{chunk_idx}')
                     return b''
 
-                full_pcm_16k = b''.join(raw_chunks)
+                pcm_8k = b''.join(raw_chunks)
                 logger.info(
-                    f'[TTS] Sarvam raw: bytes={len(full_pcm_16k)}, '
-                    f'first32={full_pcm_16k[:32].hex()}, rate=16000'
+                    f'[TTS] Sarvam raw 8kHz: bytes={len(pcm_8k)}, '
+                    f'first32={pcm_8k[:32].hex()}'
                 )
 
                 # Strip WAV header if Sarvam returned WAV instead of raw PCM
-                if full_pcm_16k.startswith(b'RIFF') and b'WAVE' in full_pcm_16k[:16]:
+                if pcm_8k.startswith(b'RIFF') and b'WAVE' in pcm_8k[:16]:
                     logger.info('[TTS] Sarvam returned WAV - stripping RIFF header')
-                    data_idx = full_pcm_16k.find(b'data')
-                    full_pcm_16k = full_pcm_16k[data_idx + 8:] if data_idx != -1 else full_pcm_16k[44:]
+                    data_idx = pcm_8k.find(b'data')
+                    pcm_8k = pcm_8k[data_idx + 8:] if data_idx != -1 else pcm_8k[44:]
 
-                # Resample 16kHz -> 8kHz in one pass on the complete buffer
-                pcm_8k = ensure_pcm16_mono_8khz(full_pcm_16k, input_format='pcm', input_sample_rate=16000)
-                logger.info(f'[TTS] After 16k->8k resample: bytes={len(pcm_8k)}')
+                # No resampling needed: Sarvam returned 8kHz PCM directly
 
             else:
                 # Deepgram streams 8kHz 16-bit linear PCM directly
@@ -615,6 +631,11 @@ class AsteriskVoiceSession:
                     playback_start_t = time.time()
                     logger.info(f'[Pipeline] Playback Start: {int((playback_start_t - pipeline_start) * 1000)}ms')
 
+                    # Absolute-deadline pacing: each frame must be sent at a fixed
+                    # 20ms interval. Using monotonic clock avoids drift caused by
+                    # the non-zero time that writer.drain() takes on each iteration.
+                    next_send_time = time.monotonic()
+
                     while offset < pcm_bytes and not self.barge_in_event.is_set():
                         chunk = pcm_8k[offset:offset+320]
                         offset += 320
@@ -630,14 +651,22 @@ class AsteriskVoiceSession:
                             break
 
                         packet = bytes([0x10]) + len(chunk).to_bytes(2, 'big') + chunk
-                        self.writer.write(packet)
-                        try:
-                            await self.writer.drain()
-                        except Exception as e:
-                            logger.error(f'[AudioSocket] Drain error in flat playback: {e}')
-                            break
+                        async with self._writer_lock:
+                            self.writer.write(packet)
+                            try:
+                                await self.writer.drain()
+                            except Exception as e:
+                                logger.error(f'[AudioSocket] Drain error in flat playback: {e}')
+                                break
 
-                        await asyncio.sleep(0.02)
+                        next_send_time += 0.02
+                        remaining = next_send_time - time.monotonic()
+                        if remaining > 0:
+                            await asyncio.sleep(remaining)
+                        else:
+                            # We've fallen behind (drain took longer than 20ms).
+                            # Resync deadline to now rather than burst-sending frames.
+                            next_send_time = time.monotonic()
 
                     logger.info(
                         f'[Pipeline] Playback finished:\n'
@@ -895,6 +924,11 @@ class AsteriskVoiceSession:
                             break
                         await asyncio.sleep(0.02)
 
+                    # Absolute-deadline pacing for streaming mode.
+                    # Initialize NOW so first frame goes immediately without overshoot.
+                    next_send_time = time.monotonic()
+                    underflow_count = 0
+
                     while not self.barge_in_event.is_set():
                         if next_playback_idx in synthesized_audio:
                             pcm = synthesized_audio[next_playback_idx]
@@ -940,7 +974,19 @@ class AsteriskVoiceSession:
                                         and not synthesized_audio
                                     )
                                     if buffered_available >= lwm_400ms or accumulator_done:
-                                        logger.info(f"[Pipeline] Resuming playback after underflow pause: available={buffered_available} bytes")
+                                        underflow_count += 1
+                                        logger.info(
+                                            f"[Pipeline] Resuming playback after underflow pause: available={buffered_available} bytes "
+                                            f"(total_underflows={underflow_count})"
+                                        )
+                                        if underflow_count >= 3:
+                                            logger.warning(
+                                                f"[Pipeline] HIGH UNDERFLOW RATE: {underflow_count} underflows so far — "
+                                                f"Sarvam TTS may not be keeping up with real-time. "
+                                                f"Consider increasing pre-buffer (lwm_800ms) or checking Sarvam latency."
+                                            )
+                                        # CRITICAL: reset deadline after waiting to avoid burst-send catch-up
+                                        next_send_time = time.monotonic()
                                         break
                                     await asyncio.sleep(0.05)
                                 continue
@@ -958,14 +1004,21 @@ class AsteriskVoiceSession:
                             break
 
                         packet = bytes([0x10]) + len(chunk).to_bytes(2, "big") + chunk
-                        self.writer.write(packet)
-                        try:
-                            await self.writer.drain()
-                        except Exception as e:
-                            logger.error(f'[AudioSocket] Drain error in playback_pacer: {e}')
-                            break
+                        async with self._writer_lock:
+                            self.writer.write(packet)
+                            try:
+                                await self.writer.drain()
+                            except Exception as e:
+                                logger.error(f'[AudioSocket] Drain error in playback_pacer: {e}')
+                                break
 
-                        await asyncio.sleep(0.02)
+                        next_send_time += 0.02
+                        remaining = next_send_time - time.monotonic()
+                        if remaining > 0:
+                            await asyncio.sleep(remaining)
+                        else:
+                            # Fallen behind: resync to avoid burst-sending on catch-up
+                            next_send_time = time.monotonic()
 
                 # 5. Pipeline Visualization Task
                 async def pipeline_visualizer():
