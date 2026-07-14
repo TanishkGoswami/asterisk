@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Book, Save, Loader2, Bot, FlaskConical, Plus, FileText, ChevronDown } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useWorkspace } from "@/context/WorkspaceContext";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 
 export const Route = createFileRoute(
   "/_authenticated/dashboard/knowledge-base",
@@ -188,89 +189,91 @@ function KnowledgeBasePage() {
           </div>
         )}
 
-        {/* Editor — opens below selected card */}
-        {selectedAgentId && (
-          <div className="pt-12">
-            {saved ? (
-              <div className="border border-[#e6e6e6] rounded-[32px] p-24 bg-white flex flex-col items-center justify-center gap-12 text-center">
-                <div className="h-20 w-20 rounded-full bg-[#c8e6cd]/20 flex items-center justify-center">
-                  <Save className="h-10 w-10 text-[#1ea64a]" />
-                </div>
-                <div className="space-y-4">
-                  <h3 className="text-[48px] font-[340] tracking-tight">Success</h3>
-                  <p className="text-[20px] font-[330] text-black/60">
-                    {selectedAgent?.name}'s neural context has been synchronized.
-                  </p>
-                </div>
-                <div className="flex gap-6">
-                  <Button
-                    variant="ghost"
-                    className="h-14 rounded-full border border-[#e6e6e6] px-10 text-[18px] font-[480] hover:bg-[#f7f7f5]"
-                    onClick={() => { setSaved(false); setSaveError(null); }}
-                  >
-                    Edit Again
-                  </Button>
-                  <Button
-                    asChild
-                    className="h-14 rounded-full bg-black text-white px-10 text-[18px] font-[480] hover:bg-black/90"
-                  >
-                    <Link to="/dashboard/qa" search={{ agentId: selectedAgentId }}>
-                      <FlaskConical className="h-5 w-5 mr-3" />
-                      Test This Agent
-                    </Link>
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="border border-[#e6e6e6] rounded-[32px] overflow-hidden bg-white shadow-2xl shadow-black/5">
-                <div className="p-12 border-b border-[#f1f1f1] flex items-center justify-between">
-                  <div className="space-y-1">
-                    <h3 className="text-[32px] font-[340] tracking-tight">
-                      {selectedAgent?.name} Context
-                    </h3>
-                    <p className="font-mono text-[12px] uppercase tracking-widest text-black/40">
-                      {content.length.toLocaleString()} characters stored
+        {/* Editor Modal */}
+        <Dialog open={!!selectedAgentId} onOpenChange={(open) => { if (!open) setSelectedAgentId(""); }}>
+          <DialogContent className="max-w-4xl w-[95vw] max-h-[90vh] overflow-y-auto p-0 rounded-[32px] border border-[#e6e6e6] bg-white gap-0">
+            {selectedAgentId && (
+              saved ? (
+                <div className="p-16 flex flex-col items-center justify-center gap-8 text-center min-h-[400px]">
+                  <div className="h-20 w-20 rounded-full bg-[#c8e6cd]/20 flex items-center justify-center">
+                    <Save className="h-10 w-10 text-[#1ea64a]" />
+                  </div>
+                  <div className="space-y-3">
+                    <h3 className="text-3xl font-[500] tracking-tight">Success</h3>
+                    <p className="text-lg text-black/60">
+                      {selectedAgent?.name}'s neural context has been synchronized.
                     </p>
                   </div>
-                  {saveError && (
-                    <span className="text-[14px] font-[480] text-red-500 italic">Save failed: {saveError}</span>
-                  )}
+                  <div className="flex gap-4 mt-4">
+                    <Button
+                      variant="ghost"
+                      className="h-12 rounded-full border border-[#e6e6e6] px-8 text-base font-medium hover:bg-[#f7f7f5]"
+                      onClick={() => { setSaved(false); setSaveError(null); }}
+                    >
+                      Edit Again
+                    </Button>
+                    <Button
+                      asChild
+                      className="h-12 rounded-full bg-black text-white px-8 text-base font-medium hover:bg-black/90"
+                    >
+                      <Link to="/dashboard/qa" search={{ agentId: selectedAgentId }}>
+                        <FlaskConical className="h-4 w-4 mr-2" />
+                        Test This Agent
+                      </Link>
+                    </Button>
+                  </div>
                 </div>
+              ) : (
+                <div className="flex flex-col h-full">
+                  <div className="p-8 border-b border-[#f1f1f1] flex items-center justify-between">
+                    <div className="space-y-1">
+                      <h3 className="text-2xl font-[600] tracking-tight">
+                        {selectedAgent?.name} Context
+                      </h3>
+                      <p className="font-mono text-xs uppercase tracking-widest text-black/40">
+                        {content.length.toLocaleString()} characters stored
+                      </p>
+                    </div>
+                    {saveError && (
+                      <span className="text-sm font-medium text-red-500 italic mr-8">Save failed: {saveError}</span>
+                    )}
+                  </div>
 
-                <div className="p-12">
-                  <Textarea
-                    value={content}
-                    onChange={(e) => setContent(e.target.value)}
-                    className="min-h-[600px] border-[#e6e6e6] rounded-[24px] p-12 text-[18px] leading-relaxed font-[330] focus:border-black transition-all"
-                    placeholder="Paste company information, FAQs, product details, pricing, scripts — anything this agent should know..."
-                  />
+                  <div className="p-8 flex-1">
+                    <Textarea
+                      value={content}
+                      onChange={(e) => setContent(e.target.value)}
+                      className="min-h-[400px] md:min-h-[500px] border-[#e6e6e6] rounded-[20px] p-6 text-base leading-relaxed font-normal focus-visible:ring-1 focus-visible:ring-black focus:border-black transition-all"
+                      placeholder="Paste company information, FAQs, product details, pricing, scripts — anything this agent should know..."
+                    />
+                  </div>
+
+                  <div className="p-8 border-t border-[#f1f1f1] bg-[#f7f7f5] flex flex-col sm:flex-row items-center justify-between gap-6 rounded-b-[32px]">
+                    <Button
+                      asChild
+                      variant="ghost"
+                      className="h-12 rounded-full border border-[#e6e6e6] px-8 text-base font-medium bg-white hover:bg-white"
+                    >
+                      <Link to="/dashboard/qa" search={{ agentId: selectedAgentId }}>
+                        <FlaskConical className="h-4 w-4 mr-2" />
+                        Test Live Session
+                      </Link>
+                    </Button>
+
+                    <Button
+                      className="h-12 rounded-full px-8 bg-black text-white text-base font-medium hover:bg-black/90 shadow-lg shadow-black/10 transition-all"
+                      disabled={isSaving}
+                      onClick={saveKnowledgeBase}
+                    >
+                      {isSaving ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <Save className="h-5 w-5 mr-2" />}
+                      {isSaving ? "Saving..." : "Save Context"}
+                    </Button>
+                  </div>
                 </div>
-
-                <div className="p-12 border-t border-[#f1f1f1] bg-[#f7f7f5] flex flex-col sm:flex-row items-center justify-between gap-8">
-                  <Button
-                    asChild
-                    variant="ghost"
-                    className="h-14 rounded-full border border-[#e6e6e6] px-10 text-[18px] font-[480] bg-white hover:bg-white"
-                  >
-                    <Link to="/dashboard/qa" search={{ agentId: selectedAgentId }}>
-                      <FlaskConical className="h-5 w-5 mr-3" />
-                      Test Live Session
-                    </Link>
-                  </Button>
-
-                  <Button
-                    className="h-16 rounded-full px-12 bg-black text-white text-[20px] font-[480] hover:bg-black/90 shadow-xl shadow-black/10 transition-all"
-                    disabled={isSaving}
-                    onClick={saveKnowledgeBase}
-                  >
-                    {isSaving ? <Loader2 className="h-6 w-6 animate-spin mr-3" /> : <Save className="h-6 w-6 mr-3" />}
-                    {isSaving ? "Saving..." : "Save Context"}
-                  </Button>
-                </div>
-              </div>
+              )
             )}
-          </div>
-        )}
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );
