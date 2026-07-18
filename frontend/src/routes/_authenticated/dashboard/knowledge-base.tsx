@@ -219,140 +219,51 @@ function KnowledgeBasePage() {
           </div>
         )}
 
-<<<<<<< Updated upstream
-  {/* Editor Modal */ }
-  <Dialog open={!!selectedAgentId} onOpenChange={(open) => { if (!open) setSelectedAgentId(""); }}>
-    <DialogContent className="max-w-4xl w-[95vw] max-h-[90vh] overflow-y-auto p-0 rounded-[32px] border border-[#e6e6e6] bg-white gap-0">
-      {selectedAgentId && (
-        saved ? (
-          <div className="p-16 flex flex-col items-center justify-center gap-8 text-center min-h-[400px]">
-            <div className="h-20 w-20 rounded-full bg-[#c8e6cd]/20 flex items-center justify-center">
-              <Save className="h-10 w-10 text-[#1ea64a]" />
-            </div>
-            <div className="space-y-3">
-              <h3 className="text-3xl font-[500] tracking-tight">Success</h3>
-              <p className="text-lg text-black/60">
-                {selectedAgent?.name}'s neural context has been synchronized.
-              </p>
-            </div>
-            <div className="flex gap-4 mt-4">
-              <Button
-                variant="ghost"
-                className="h-12 rounded-full border border-[#e6e6e6] px-8 text-base font-medium hover:bg-[#f7f7f5]"
-                onClick={() => { setSaved(false); setSaveError(null); }}
-              >
-                Edit Again
-              </Button>
-              <Button
-                asChild
-                className="h-12 rounded-full bg-black text-white px-8 text-base font-medium hover:bg-black/90"
-              >
-                <Link to="/dashboard/qa" search={{ agentId: selectedAgentId }}>
-                  <FlaskConical className="h-4 w-4 mr-2" />
-                  Test This Agent
-                </Link>
-              </Button>
-            </div>
-=======
         {/* Dialog / Modal popup editor */}
-            <Dialog open={!!selectedAgentId} onOpenChange={(open) => { if (!open) handleCloseDialog(); }}>
-              <DialogContent className="sm:max-w-4xl max-h-[92vh] flex flex-col p-0 overflow-hidden rounded-[24px] border border-neutral-200 bg-white shadow-2xl">
-                {selectedAgent && (
-                  <>
-                    {/* Modal Header */}
-                    <div className="p-6 border-b border-neutral-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-neutral-50/30">
-                      <div className="flex items-center gap-3.5">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-neutral-900 text-white shadow-sm">
-                          <Bot className="h-6 w-6" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <DialogTitle className="text-xl font-bold tracking-tight text-neutral-950">
-                              {selectedAgent.name}
-                            </DialogTitle>
-                            <Badge variant="outline" className="h-5 rounded-full border-neutral-200 bg-white px-2 font-mono text-[9px] uppercase tracking-wider text-neutral-500">
-                              {selectedAgent.language}
-                            </Badge>
-                          </div>
-                          <DialogDescription className="text-xs text-neutral-500 mt-0.5 font-light">
-                            Edit the system knowledge and RAG context for this agent.
-                          </DialogDescription>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs text-neutral-400 font-mono">Status:</span>
-                        {selectedAgent.status === "active" ? (
-                          <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 border border-emerald-100/80">
-                            <span className="relative flex h-1.5 w-1.5">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-                            </span>
-                            Active
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1.5 rounded-full bg-neutral-50 px-2.5 py-1 text-[11px] font-medium text-neutral-500 border border-neutral-150">
-                            <span className="h-1.5 w-1.5 rounded-full bg-neutral-300" />
-                            Inactive
-                          </span>
-                        )}
-                      </div>
->>>>>>> Stashed changes
+        <Dialog open={!!selectedAgentId} onOpenChange={(open) => { if (!open) handleCloseDialog(); }}>
+          <DialogContent className="sm:max-w-4xl max-h-[92vh] flex flex-col p-0 overflow-hidden rounded-[24px] border border-neutral-200 bg-white shadow-2xl">
+            {selectedAgent && (
+              <>
+                {/* Modal Header */}
+                <div className="p-6 border-b border-neutral-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-neutral-50/30">
+                  <div className="flex items-center gap-3.5">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-neutral-900 text-white shadow-sm">
+                      <Bot className="h-6 w-6" />
                     </div>
-                    ) : (
-                    <div className="flex flex-col h-full">
-                      <div className="p-8 border-b border-[#f1f1f1] flex items-center justify-between">
-                        <div className="space-y-1">
-                          <h3 className="text-2xl font-[600] tracking-tight">
-                            {selectedAgent?.name} Context
-                          </h3>
-                          <p className="font-mono text-xs uppercase tracking-widest text-black/40">
-                            {content.length.toLocaleString()} characters stored
-                          </p>
-                        </div>
-                        {saveError && (
-                          <span className="text-sm font-medium text-red-500 italic mr-8">Save failed: {saveError}</span>
-                        )}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <DialogTitle className="text-xl font-bold tracking-tight text-neutral-950">
+                          {selectedAgent.name}
+                        </DialogTitle>
+                        <Badge variant="outline" className="h-5 rounded-full border-neutral-200 bg-white px-2 font-mono text-[9px] uppercase tracking-wider text-neutral-500">
+                          {selectedAgent.language}
+                        </Badge>
                       </div>
-
-<<<<<<< Updated upstream
-                  <div className="p-8 flex-1">
-                    <Textarea
-                      value={content}
-                      onChange={(e) => setContent(e.target.value)}
-                      className="min-h-[400px] md:min-h-[500px] border-[#e6e6e6] rounded-[20px] p-6 text-base leading-relaxed font-normal focus-visible:ring-1 focus-visible:ring-black focus:border-black transition-all"
-                      placeholder="Paste company information, FAQs, product details, pricing, scripts — anything this agent should know..."
-                    />
+                      <DialogDescription className="text-xs text-neutral-500 mt-0.5 font-light">
+                        Edit the system knowledge and RAG context for this agent.
+                      </DialogDescription>
+                    </div>
                   </div>
 
-                  <div className="p-8 border-t border-[#f1f1f1] bg-[#f7f7f5] flex flex-col sm:flex-row items-center justify-between gap-6 rounded-b-[32px]">
-                    <Button
-                      asChild
-                      variant="ghost"
-                      className="h-12 rounded-full border border-[#e6e6e6] px-8 text-base font-medium bg-white hover:bg-white"
-                    >
-                      <Link to="/dashboard/qa" search={{ agentId: selectedAgentId }}>
-                        <FlaskConical className="h-4 w-4 mr-2" />
-                        Test Live Session
-                      </Link>
-                    </Button>
-
-                    <Button
-                      className="h-12 rounded-full px-8 bg-black text-white text-base font-medium hover:bg-black/90 shadow-lg shadow-black/10 transition-all"
-                      disabled={isSaving}
-                      onClick={saveKnowledgeBase}
-                    >
-                      {isSaving ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <Save className="h-5 w-5 mr-2" />}
-                      {isSaving ? "Saving..." : "Save Context"}
-                    </Button>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-neutral-400 font-mono">Status:</span>
+                    {selectedAgent.status === "active" ? (
+                      <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 border border-emerald-100/80">
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                        </span>
+                        Active
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 rounded-full bg-neutral-50 px-2.5 py-1 text-[11px] font-medium text-neutral-500 border border-neutral-150">
+                        <span className="h-1.5 w-1.5 rounded-full bg-neutral-300" />
+                        Inactive
+                      </span>
+                    )}
                   </div>
-                </div >
-              )
-            )
-}
-          </DialogContent >
-        </Dialog >
-=======
+                </div>
+
                 {/* Editor Textarea */}
                 <div className="flex-1 p-6 overflow-y-auto min-h-[350px] max-h-[58vh] flex flex-col gap-3">
                   <div className="flex items-center justify-between">
@@ -413,10 +324,9 @@ function KnowledgeBasePage() {
                 </div>
               </>
             )}
-          </DialogContent>
+              </DialogContent>
         </Dialog>
 
->>>>>>> Stashed changes
       </div >
     </div >
   );
