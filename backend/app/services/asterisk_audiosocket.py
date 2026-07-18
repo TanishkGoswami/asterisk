@@ -40,6 +40,8 @@ async def read_packet(reader: asyncio.StreamReader) -> tuple[int, bytes]:
     try:
         header = await reader.readexactly(3)
     except asyncio.IncompleteReadError as e:
+        if not e.partial:
+            raise ConnectionError("AudioSocket connection closed cleanly (EOF) before packet header")
         raise ConnectionError(f"AudioSocket EOF before packet header: {e}")
 
     msg_type = header[0]
@@ -564,7 +566,6 @@ class AsteriskVoiceSession:
         # ----------------------------------------------------------------
         llm = LLMService(
             openai_key=settings.openai_api_key,
-            anthropic_key=settings.anthropic_api_key
         )
         model = self.config.get('model') or voice_cfg.OPENAI_VOICE_MODEL
         logger.info(f'[Pipeline] OpenAI request -> model={model}, max_tokens={voice_cfg.OPENAI_MAX_OUTPUT_TOKENS}')
@@ -1342,7 +1343,10 @@ class AsteriskAudioSocketServer:
                 diagnostics.add_error("error", "audiosocket", f"Session run error: {str(e)}")
 
         except (asyncio.IncompleteReadError, ConnectionError, BrokenPipeError, ConnectionResetError) as e:
-            logger.info(f"[AudioSocket] Client disconnected normally during handshake: {e}")
+            if "closed cleanly" in str(e):
+                logger.info(f"[AudioSocket] Port probe or clean disconnect during handshake: {e}")
+            else:
+                logger.info(f"[AudioSocket] Client disconnected normally during handshake: {e}")
         except Exception as e:
             logger.error(f"[AudioSocket] Unexpected error in handle_connection: {e}", exc_info=True)
             diagnostics.add_error("error", "audiosocket", f"Unexpected connection error: {str(e)}")

@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -25,9 +26,77 @@ from app.api.v1 import (
 setup_logging(log_level=settings.log_level, log_file="logs/app.log")
 logger = logging.getLogger(__name__)
 
+
+async def run_asterisk_startup_checks():
+    import asyncio
+    await asyncio.sleep(2.0)  # Wait a bit for Uvicorn and TCP AudioSocket server to start listening
+    logger.info("[Startup Check] Running Asterisk and local environment diagnostics...")
+    
+    # 1. Check AudioSocket listener
+    from app.api.v1.calls import is_audiosocket_listening
+    if is_audiosocket_listening():
+        logger.info("[Startup Check] AudioSocket TCP listener is ACTIVE on 127.0.0.1:9092")
+    else:
+        logger.warning("[Startup Check] AudioSocket TCP listener is NOT active on 127.0.0.1:9092. Outbound calls will fail locally!")
+        
+    # 2. Check Asterisk CLI availability
+    from app.services.asterisk_cli import execute_asterisk_cli_cmd
+    res = execute_asterisk_cli_cmd("core show version")
+    ret_code = res.get("returncode", -1)
+    stdout_val = res.get("stdout", "")
+    stderr_val = res.get("stderr", "")
+    
+    if ret_code == 0:
+        logger.info(f"[Startup Check] Asterisk CLI is REACHABLE. Version: {stdout_val.strip()}")
+    else:
+        logger.warning(
+            f"[Startup Check] Asterisk CLI is NOT reachable. Code={ret_code}. Stderr={stderr_val.strip()}. "
+            "Please ensure Asterisk is running in WSL/local and the user has permissions to access "
+            "/var/run/asterisk/asterisk.ctl. You can grant access using: "
+            "sudo chmod g+rw /var/run/asterisk/asterisk.ctl"
+        )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run background tasks on startup and clean up on shutdown"""
+    import asyncio
+    from datetime import datetime, timezone
+    from app.tasks.scheduler import start_local_scheduler
+    from app.api.v1.diagnostics import diagnostics
+    diagnostics.audiosocket_start_time = datetime.now(timezone.utc)
+
+    # Start the local scheduler loop in the background
+    asyncio.create_task(start_local_scheduler())
+
+    # Start Asterisk startup diagnostic checks in the background
+    asyncio.create_task(run_asterisk_startup_checks())
+
+    # Start the Asterisk Audiosocket TCP server if enabled
+    if settings.asterisk_audiosocket_enabled:
+        from app.services.asterisk_audiosocket import start_audiosocket_server
+        asyncio.create_task(
+            start_audiosocket_server(
+                host=settings.asterisk_audiosocket_host,
+                port=settings.asterisk_audiosocket_port
+            )
+        )
+
+    yield
+
+    # Stop the Audiosocket TCP server gracefully on server shutdown.
+    if settings.asterisk_audiosocket_enabled:
+        try:
+            from app.services.asterisk_audiosocket import stop_audiosocket_server
+            await stop_audiosocket_server()
+        except Exception as e:
+            logger.error(f"Error stopping Audiosocket server: {e}")
+
+
 app = FastAPI(
     title="OmniDim Voice AI Agent Platform",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS
@@ -120,38 +189,7 @@ async def health_asterisk():
     return get_audiosocket_stats()
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Run background tasks on startup"""
-    import asyncio
-    from datetime import datetime, timezone
-    from app.tasks.scheduler import start_local_scheduler
-    from app.api.v1.diagnostics import diagnostics
-    diagnostics.audiosocket_start_time = datetime.now(timezone.utc)
-
-    # Start the local scheduler loop in the background
-    asyncio.create_task(start_local_scheduler())
-
-    # Start the Asterisk Audiosocket TCP server if enabled
-    if settings.asterisk_audiosocket_enabled:
-        from app.services.asterisk_audiosocket import start_audiosocket_server
-        asyncio.create_task(
-            start_audiosocket_server(
-                host=settings.asterisk_audiosocket_host,
-                port=settings.asterisk_audiosocket_port
-            )
-        )
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Stop the Audiosocket TCP server gracefully on server shutdown."""
-    if settings.asterisk_audiosocket_enabled:
-        try:
-            from app.services.asterisk_audiosocket import stop_audiosocket_server
-            await stop_audiosocket_server()
-        except Exception as e:
-            logger.error(f"Error stopping Audiosocket server: {e}")
+# Lifespan events are handled in the lifespan context manager defined above
 
 
 if __name__ == "__main__":

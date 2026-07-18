@@ -18,7 +18,6 @@ class WorkflowExecutor:
         from app.core.config import settings
         self.llm = LLMService(
             openai_key=settings.openai_api_key or "",
-            anthropic_key=settings.anthropic_api_key or "",
         )
 
     def _get_workflow_data(self, agent: dict) -> dict:
