@@ -31,6 +31,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { VoiceStreamClient, type LatencySummary } from "@/lib/voiceStream";
 import { useWorkspace } from "@/context/WorkspaceContext";
+import { cn } from "@/lib/utils";
 
 const API_BASE = (
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8000"
@@ -132,6 +133,7 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
   const [latency, setLatency] = useState<LatencySummary | null>(null);
   const [llmResponseText, setLlmResponseText] = useState("");
   const [isAssistantSpeaking, setIsAssistantSpeaking] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
 
   const [selectedModel, setSelectedModel] = useState("");
   const [selectedVoice, setSelectedVoice] = useState("");
@@ -289,13 +291,15 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
   // ── Streaming session ────────────────────────────────────────
 
   async function startSession() {
-    if (isRecording) return;
+    if (isRecording || isConnecting) return;
+    setIsConnecting(true);
     setLlmResponseText("");
     setLatency(null);
     setStatus("Connecting...");
 
     const client = new VoiceStreamClient({
       onReady: () => {
+        setIsConnecting(false);
         setStatus("Listening...");
         setIsRecording(true);
         startVisualizer();
@@ -331,6 +335,7 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
       onError: (msg) => {
         setStatus("Error: " + msg);
         setIsRecording(false);
+        setIsConnecting(false);
       },
     });
 
@@ -351,6 +356,7 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
     } catch (err) {
       setStatus("Mic / connection error: " + (err instanceof Error ? err.message : String(err)));
       setIsRecording(false);
+      setIsConnecting(false);
     }
   }
 
@@ -358,6 +364,7 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
     voiceClientRef.current?.disconnect();
     voiceClientRef.current = null;
     setIsRecording(false);
+    setIsConnecting(false);
     setIsAssistantSpeaking(false);
     setIsUserSpeaking(false);
     setCurrentVolume(0);
@@ -846,11 +853,18 @@ export function Playground({ initialAgentId }: PlaygroundProps) {
               ) : (
                 <div className="flex animate-in flex-col items-center space-y-6 fade-in slide-in-from-bottom-4 duration-700">
                   <div
-                    className="group flex h-24 w-24 cursor-pointer items-center justify-center rounded-full border border-[#e6e6e6] bg-white shadow-sm transition-all duration-500 hover:border-[#c5b0f4] hover:bg-[#c5b0f4]/5 active:scale-95"
-                    onClick={startSession}
+                    className={cn(
+                      "group flex h-24 w-24 cursor-pointer items-center justify-center rounded-full border border-[#e6e6e6] bg-white shadow-sm transition-all duration-500 hover:border-[#c5b0f4] hover:bg-[#c5b0f4]/5 active:scale-95",
+                      isConnecting && "pointer-events-none opacity-50"
+                    )}
+                    onClick={isConnecting ? undefined : startSession}
                   >
                     <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#f7f7f5] transition-colors duration-500 group-hover:bg-[#c5b0f4]">
-                      <Mic className="h-6 w-6 text-black/50 transition-all duration-500 group-hover:scale-110 group-hover:text-white" />
+                      {isConnecting ? (
+                        <Loader2 className="h-6 w-6 animate-spin text-[#c5b0f4]" />
+                      ) : (
+                        <Mic className="h-6 w-6 text-black/50 transition-all duration-500 group-hover:scale-110 group-hover:text-white" />
+                      )}
                     </div>
                   </div>
                   <div className="space-y-1 text-center">

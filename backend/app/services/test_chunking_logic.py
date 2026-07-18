@@ -1,4 +1,5 @@
 import asyncio
+import pytest
 import re
 from typing import List, Set
 
@@ -147,6 +148,7 @@ class PipelineTester:
 # Test Cases for safe_sentence mode
 # =====================================================================
 
+@pytest.mark.anyio
 async def test_safe_sentence_first_chunk():
     print("Running test_safe_sentence_first_chunk...")
     settings.DISABLE_STREAMING_TTS = False
@@ -166,6 +168,7 @@ async def test_safe_sentence_first_chunk():
     assert chunks[0] == "Hello, kaise ho aap? Main aur hum sath milkar kaam karenge."
     print("SUCCESS\n")
 
+@pytest.mark.anyio
 async def test_no_split_on_aggressive_words():
     print("Running test_no_split_on_aggressive_words...")
     settings.DISABLE_STREAMING_TTS = False
@@ -188,6 +191,7 @@ async def test_no_split_on_aggressive_words():
     assert chunks[0] == "Hum aapko is business me support karna chahte hain aur aapka revenue double kar sakte hain, lekin aapko kuch changes karne honge."
     print("SUCCESS\n")
 
+@pytest.mark.anyio
 async def test_disable_streaming_tts():
     print("Running test_disable_streaming_tts...")
     settings.DISABLE_STREAMING_TTS = True

@@ -233,9 +233,10 @@ def run_voice_call(task_id: str, payload: Dict[str, Any], attempt: int = 1):
                     if not is_audiosocket_listening():
                         raise ValueError("AudioSocket server is not listening on 127.0.0.1:9092")
 
-                    endpoint_check = execute_asterisk_cli(f"pjsip show endpoint {endpoint_name}")
-                    if endpoint_check["returncode"] != 0 or "Unable to find" in endpoint_check["stdout"] or "not found" in endpoint_check["stdout"].lower():
-                        raise ValueError(f"SIP Trunk Endpoint '{endpoint_name}' does not exist in Asterisk")
+                    from app.services.asterisk_cli import verify_endpoint_status
+                    validation = verify_endpoint_status(endpoint_name)
+                    if validation["status"] != "valid":
+                        raise ValueError(validation["message"])
 
                     orig_cmd = f"channel originate Local/{caller_id}*{trunk_id}*{dial_number}@outbound-local/n application AudioSocket {call_id},127.0.0.1:9092"
                     res = execute_asterisk_cli(orig_cmd)

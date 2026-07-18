@@ -158,31 +158,12 @@ def run_safe_asterisk_cmd(command: str) -> str:
     if clean_command not in allowed:
         raise HTTPException(status_code=400, detail="Command is not in the approved whitelist.")
 
-    cmd = ["asterisk", "-rx", clean_command]
-    try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        if res.returncode == 0:
-            return res.stdout
-        else:
-            return f"Error: {res.stderr}"
-    except (FileNotFoundError, subprocess.SubprocessError):
-        # Fallback to SSH for remote execution
-        ssh_host = os.getenv("ASTERISK_SSH_HOST") or "72.60.202.148"
-        ssh_user = os.getenv("ASTERISK_SSH_USER") or "root"
-
-        ssh_cmd = [
-            "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
-            f"{ssh_user}@{ssh_host}",
-            f"asterisk -rx \"{clean_command}\""
-        ]
-        try:
-            ssh_res = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=12)
-            if ssh_res.returncode == 0:
-                return ssh_res.stdout
-            else:
-                return f"Error executing on remote Asterisk VPS: {ssh_res.stderr}"
-        except Exception as e:
-            return f"Execution failed locally and remotely: {str(e)}"
+    from app.services.asterisk_cli import execute_asterisk_cli_cmd
+    res = execute_asterisk_cli_cmd(clean_command, timeout=12.0)
+    if res["returncode"] == 0:
+        return res["stdout"]
+    else:
+        return f"Error: {res['stderr'] or res['stdout']}"
 
 
 # --- Pydantic Request Models ---
