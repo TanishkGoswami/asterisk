@@ -103,7 +103,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             updated_at: new Date().toISOString(),
             synced_at: new Date().toISOString(),
           }, { onConflict: 'email' })
-          .then(({ error }) => {
+          .then(({ error }: { error: any }) => {
             if (error) console.warn('[AUTH] hub_subscriptions local write-back skipped:', error.message);
           });
       }

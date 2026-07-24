@@ -2,6 +2,7 @@ import logging
 import json
 import redis
 import asyncio
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, Dict, Any
 from app.core.config import settings
@@ -9,12 +10,39 @@ from app.db.client import get_supabase_client, Client
 
 logger = logging.getLogger(__name__)
 
+# Rate-limited Redis warnings helper
+_last_redis_warning_time = 0.0
+
+def log_redis_warning(msg: str):
+    global _last_redis_warning_time
+    now = time.time()
+    if now - _last_redis_warning_time > 60.0:  # rate-limit to once per 60 seconds
+        logger.warning(msg)
+        _last_redis_warning_time = now
+    else:
+        logger.debug(msg)
+
 # Initialize Redis client
+redis_client = None
 try:
     redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+    if settings.redis_required:
+        # Fail fast: ping Redis to verify it is online
+        redis_client.ping()
+        logger.info("[CAC] Redis connection verified successfully.")
+    else:
+        # Just try pinging to log a status warning or info
+        try:
+            redis_client.ping()
+            logger.info("[CAC] Redis connection initialized successfully (optional).")
+        except Exception as ping_err:
+            logger.warning(f"[CAC] Redis connection failed (optional): {ping_err}. Fallback behavior enabled.")
 except Exception as e:
-    logger.critical(f"[CAC] Failed to initialize Redis connection: {e}")
-    redis_client = None
+    if settings.redis_required:
+        logger.critical(f"[CAC] Failed to connect to REQUIRED Redis server: {e}")
+        raise RuntimeError(f"Redis is required but connection failed: {e}")
+    else:
+        logger.warning(f"[CAC] Failed to initialize OPTIONAL Redis client: {e}. Fallback behavior enabled.")
 
 # Lua Script for atomic increment and limit check
 RESERVE_LUA = """
@@ -370,9 +398,9 @@ async def check_and_reserve_call(
             return True, None
 
         except Exception as redis_err:
-            logger.error(f"[CAC] Redis transaction error: {redis_err}")
-            if settings.allow_calls_without_redis:
-                logger.warning(f"[CAC] Redis unavailable - {direction.capitalize()} call allowed due to ALLOW_CALLS_WITHOUT_REDIS=True")
+            log_redis_warning(f"[CAC] Redis transaction error: {redis_err}")
+            if not settings.redis_required or settings.allow_calls_without_redis:
+                logger.warning(f"[CAC] Redis unavailable - {direction.capitalize()} call allowed due to Redis being optional")
                 
                 # Insert reservation record in database persistently so the VPS API can validate it
                 ttl = settings.call_reservation_ttl_seconds or 2700
@@ -477,7 +505,10 @@ def release_call_reservation(call_uuid: str) -> bool:
         return True
 
     except Exception as e:
-        logger.error(f"[CAC] Failed to release call reservation {call_uuid}: {e}")
+        log_redis_warning(f"[CAC] Failed to release call reservation {call_uuid} in Redis: {e}")
+        if not settings.redis_required:
+            logger.info(f"[CAC] Redis release failed, but Redis is optional. Database update is authoritative. Status: {db_updated}")
+            return db_updated
         return False
 
 
@@ -560,21 +591,24 @@ def get_active_reservations(workspace_id: Optional[str] = None) -> list:
         return []
     
     reservations = []
-    # Scan call reservation keys
-    for key in redis_client.scan_iter("call:*:reservation"):
-        try:
-            data = redis_client.get(key)
-            if data:
-                res = json.loads(data)
-                if res.get("status") == "released":
-                    continue
-                if workspace_id and res.get("workspace_id") != workspace_id:
-                    continue
-                res["key"] = key
-                res["call_uuid"] = key.split(":")[1]
-                reservations.append(res)
-        except Exception as e:
-            logger.error(f"[CAC] Error reading reservation {key}: {e}")
+    try:
+        # Scan call reservation keys
+        for key in redis_client.scan_iter("call:*:reservation"):
+            try:
+                data = redis_client.get(key)
+                if data:
+                    res = json.loads(data)
+                    if res.get("status") == "released":
+                        continue
+                    if workspace_id and res.get("workspace_id") != workspace_id:
+                        continue
+                    res["key"] = key
+                    res["call_uuid"] = key.split(":")[1]
+                    reservations.append(res)
+            except Exception as e:
+                log_redis_warning(f"[CAC] Error reading reservation {key}: {e}")
+    except Exception as e:
+        log_redis_warning(f"[CAC] Failed to scan reservations from Redis: {e}")
     return reservations
 
 
@@ -587,7 +621,7 @@ def get_active_counters() -> dict:
     try:
         redis_client.ping()
     except Exception as e:
-        logger.warning(f"[CAC] Redis is down or unreachable, returning empty active counters: {e}")
+        log_redis_warning(f"[CAC] Redis is down or unreachable, returning empty active counters: {e}")
         return default_res
     
     workspace_active = {}
@@ -610,7 +644,7 @@ def get_active_counters() -> dict:
             t_id = key.split(":")[1]
             trunk_active[t_id] = int(val or 0)
     except Exception as e:
-        logger.error(f"[CAC] Failed to read active counters from Redis: {e}")
+        log_redis_warning(f"[CAC] Failed to read active counters from Redis: {e}")
         return default_res
         
     return {
@@ -680,110 +714,120 @@ async def reconcile_active_counters(workspace_id: Optional[str] = None) -> dict:
     if not redis_client:
         return {"success": False, "error": "Redis offline"}
     
+    try:
+        redis_client.ping()
+    except Exception as e:
+        log_redis_warning(f"[CAC] Redis is down or unreachable during active counter reconciliation: {e}")
+        return {"success": False, "error": "Redis offline"}
+    
     db = get_supabase_client()
     
-    # 1. Clean up stale reservations first
-    stale_report = await reconcile_stale_reservations(db)
-    stale_released = stale_report.get("released_count", 0)
-    
-    all_before = get_active_counters()
-    reservations = get_active_reservations(workspace_id)
-    
-    target_workspace = {}
-    target_agent = {}
-    target_trunk = {}
-    
-    for res in reservations:
-        w_id = res.get("workspace_id")
-        a_id = res.get("agent_id")
-        t_id = res.get("sip_trunk_provider_id") or "none"
-        incremented = res.get("incremented") or {}
+    try:
+        # 1. Clean up stale reservations first
+        stale_report = await reconcile_stale_reservations(db)
+        stale_released = stale_report.get("released_count", 0)
         
-        if w_id:
-            target_workspace[w_id] = target_workspace.get(w_id, 0) + (1 if incremented.get("workspace") else 0)
-        if a_id:
-            target_agent[a_id] = target_agent.get(a_id, 0) + (1 if incremented.get("agent") else 0)
-        if t_id:
-            target_trunk[t_id] = target_trunk.get(t_id, 0) + (1 if incremented.get("trunk") else 0)
-            
-    if workspace_id:
-        before_ws = all_before["workspace_active_calls"].get(workspace_id, 0)
-        after_ws = target_workspace.get(workspace_id, 0)
-        redis_client.set(f"workspace:{workspace_id}:active_calls", after_ws)
+        all_before = get_active_counters()
+        reservations = get_active_reservations(workspace_id)
         
-        before_ag = {a_id: all_before["agent_active_calls"].get(a_id, 0) for a_id in target_agent.keys()}
-        after_ag = {a_id: target_agent.get(a_id, 0) for a_id in target_agent.keys()}
-        for a_id, count in after_ag.items():
-            redis_client.set(f"agent:{a_id}:active_calls", count)
+        target_workspace = {}
+        target_agent = {}
+        target_trunk = {}
+        
+        for res in reservations:
+            w_id = res.get("workspace_id")
+            a_id = res.get("agent_id")
+            t_id = res.get("sip_trunk_provider_id") or "none"
+            incremented = res.get("incremented") or {}
             
-        before_tr = {t_id: all_before["trunk_active_calls"].get(t_id, 0) for t_id in target_trunk.keys()}
-        after_tr = {t_id: target_trunk.get(t_id, 0) for t_id in target_trunk.keys()}
-        for t_id, count in after_tr.items():
-            redis_client.set(f"trunk:{t_id}:active_calls", count)
-            
-        return {
-            "success": True,
-            "workspace_id": workspace_id,
-            "before": {
-                "workspace_active_calls": before_ws,
-                "agent_active_calls": before_ag,
-                "trunk_active_calls": before_tr
-            },
-            "after": {
-                "workspace_active_calls": after_ws,
-                "agent_active_calls": after_ag,
-                "trunk_active_calls": after_tr
-            },
-            "active_reservations": len(reservations),
-            "stale_reservations_released": stale_released,
-            "fixed": True
-        }
-    else:
-        # Reconcile globally
-        fixed_workspace = {}
-        for w_id, count in target_workspace.items():
-            ws_key = f"workspace:{w_id}:active_calls"
-            redis_client.set(ws_key, count)
-            fixed_workspace[w_id] = count
-            
-        fixed_agent = {}
-        for a_id, count in target_agent.items():
-            agent_key = f"agent:{a_id}:active_calls"
-            redis_client.set(agent_key, count)
-            fixed_agent[a_id] = count
-            
-        fixed_trunk = {}
-        for t_id, count in target_trunk.items():
-            trunk_key = f"trunk:{t_id}:active_calls"
-            redis_client.set(trunk_key, count)
-            fixed_trunk[t_id] = count
-            
-        # Clean any dangling keys not in target mapping to 0
-        for w_id in all_before["workspace_active_calls"]:
-            if w_id not in target_workspace:
-                redis_client.set(f"workspace:{w_id}:active_calls", 0)
-                fixed_workspace[w_id] = 0
+            if w_id:
+                target_workspace[w_id] = target_workspace.get(w_id, 0) + (1 if incremented.get("workspace") else 0)
+            if a_id:
+                target_agent[a_id] = target_agent.get(a_id, 0) + (1 if incremented.get("agent") else 0)
+            if t_id:
+                target_trunk[t_id] = target_trunk.get(t_id, 0) + (1 if incremented.get("trunk") else 0)
                 
-        for a_id in all_before["agent_active_calls"]:
-            if a_id not in target_agent:
-                redis_client.set(f"agent:{a_id}:active_calls", 0)
-                fixed_agent[a_id] = 0
+        if workspace_id:
+            before_ws = all_before["workspace_active_calls"].get(workspace_id, 0)
+            after_ws = target_workspace.get(workspace_id, 0)
+            redis_client.set(f"workspace:{workspace_id}:active_calls", after_ws)
+            
+            before_ag = {a_id: all_before["agent_active_calls"].get(a_id, 0) for a_id in target_agent.keys()}
+            after_ag = {a_id: target_agent.get(a_id, 0) for a_id in target_agent.keys()}
+            for a_id, count in after_ag.items():
+                redis_client.set(f"agent:{a_id}:active_calls", count)
                 
-        for t_id in all_before["trunk_active_calls"]:
-            if t_id not in target_trunk:
-                redis_client.set(f"trunk:{t_id}:active_calls", 0)
-                fixed_trunk[t_id] = 0
+            before_tr = {t_id: all_before["trunk_active_calls"].get(t_id, 0) for t_id in target_trunk.keys()}
+            after_tr = {t_id: target_trunk.get(t_id, 0) for t_id in target_trunk.keys()}
+            for t_id, count in after_tr.items():
+                redis_client.set(f"trunk:{t_id}:active_calls", count)
                 
-        return {
-            "success": True,
-            "workspace_id": None,
-            "before": all_before,
-            "after": {
-                "workspace_active_calls": fixed_workspace,
-                "agent_active_calls": fixed_agent,
-                "trunk_active_calls": fixed_trunk
-            },
-            "active_reservations": len(reservations),
-            "stale_reservations_released": stale_released,
-            "fixed": True
-        }
+            return {
+                "success": True,
+                "workspace_id": workspace_id,
+                "before": {
+                    "workspace_active_calls": before_ws,
+                    "agent_active_calls": before_ag,
+                    "trunk_active_calls": before_tr
+                },
+                "after": {
+                    "workspace_active_calls": after_ws,
+                    "agent_active_calls": after_ag,
+                    "trunk_active_calls": after_tr
+                },
+                "active_reservations": len(reservations),
+                "stale_reservations_released": stale_released,
+                "fixed": True
+            }
+        else:
+            # Reconcile globally
+            fixed_workspace = {}
+            for w_id, count in target_workspace.items():
+                ws_key = f"workspace:{w_id}:active_calls"
+                redis_client.set(ws_key, count)
+                fixed_workspace[w_id] = count
+                
+            fixed_agent = {}
+            for a_id, count in target_agent.items():
+                agent_key = f"agent:{a_id}:active_calls"
+                redis_client.set(agent_key, count)
+                fixed_agent[a_id] = count
+                
+            fixed_trunk = {}
+            for t_id, count in target_trunk.items():
+                trunk_key = f"trunk:{t_id}:active_calls"
+                redis_client.set(trunk_key, count)
+                fixed_trunk[t_id] = count
+                
+            # Clean any dangling keys not in target mapping to 0
+            for w_id in all_before["workspace_active_calls"]:
+                if w_id not in target_workspace:
+                    redis_client.set(f"workspace:{w_id}:active_calls", 0)
+                    fixed_workspace[w_id] = 0
+                    
+            for a_id in all_before["agent_active_calls"]:
+                if a_id not in target_agent:
+                    redis_client.set(f"agent:{a_id}:active_calls", 0)
+                    fixed_agent[a_id] = 0
+                    
+            for t_id in all_before["trunk_active_calls"]:
+                if t_id not in target_trunk:
+                    redis_client.set(f"trunk:{t_id}:active_calls", 0)
+                    fixed_trunk[t_id] = 0
+                    
+            return {
+                "success": True,
+                "workspace_id": None,
+                "before": all_before,
+                "after": {
+                    "workspace_active_calls": fixed_workspace,
+                    "agent_active_calls": fixed_agent,
+                    "trunk_active_calls": fixed_trunk
+                },
+                "active_reservations": len(reservations),
+                "stale_reservations_released": stale_released,
+                "fixed": True
+            }
+    except Exception as e:
+        log_redis_warning(f"[CAC] Failed to reconcile active counters from Redis: {e}")
+        return {"success": False, "error": str(e)}

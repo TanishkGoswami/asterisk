@@ -436,7 +436,6 @@ class VoiceSession:
 
         llm = LLMService(
             openai_key=settings.openai_api_key,
-            anthropic_key=settings.anthropic_api_key,
         )
         model = self.config.get("model") or voice_cfg.OPENAI_VOICE_MODEL
         voice_id = self.config.get("voice_id") or "aura-asteria-en"
@@ -1358,7 +1357,6 @@ async def test_llm_endpoint():
     
     llm = LLMService(
         openai_key=settings.openai_api_key,
-        anthropic_key=settings.anthropic_api_key,
     )
     
     tokens = []

@@ -40,7 +40,6 @@ class ScheduleParserService:
     def __init__(self, llm: Optional[LLMService] = None):
         self.llm = llm or LLMService(
             openai_key=settings.openai_api_key,
-            anthropic_key=settings.anthropic_api_key
         )
 
     async def parse(self, text: str, user_timezone: str = "UTC") -> Dict[str, Any]:
