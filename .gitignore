@@ -83,4 +83,4 @@ connect.lock
 !frontend/src/lib/
 
 # Custom AI/Editor Skills lockfile
-skills-lock.json
+skills-lock.json

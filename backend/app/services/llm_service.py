@@ -1,17 +1,14 @@
-import asyncio
 import logging
 from typing import AsyncGenerator, Dict, List, Optional
 
 import openai
-from anthropic import Anthropic
 
 logger = logging.getLogger(__name__)
 
 
 class LLMService:
-    def __init__(self, openai_key: Optional[str], anthropic_key: Optional[str]):
+    def __init__(self, openai_key: Optional[str], anthropic_key: Optional[str] = None):
         self.openai_client = openai.AsyncOpenAI(api_key=openai_key) if openai_key else None
-        self.anthropic_client = Anthropic(api_key=anthropic_key) if anthropic_key else None
 
     # ──────────────────────────────────────────
     # Non-streaming (used by phone webhook)
@@ -26,42 +23,24 @@ class LLMService:
     ) -> str:
         import time
         start_time = time.time()
-        provider = "openai" if model.startswith("gpt") else ("anthropic" if model.startswith("claude") else "unknown")
+        provider = "openai"
         try:
-            if model.startswith("gpt"):
-                model = "gpt-4o-mini"  # Force GPT-4o mini for OpenAI calls
-                if not self.openai_client:
-                    raise ValueError("OpenAI API key not configured")
-                response = await self.openai_client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "system", "content": system_prompt}] + messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-                res_content = response.choices[0].message.content or ""
-                latency = int((time.time() - start_time) * 1000)
-                from app.services.provider_health_service import log_provider_health_event
-                log_provider_health_event(provider, "llm", "success", latency_ms=latency)
-                return res_content
-
-            elif model.startswith("claude"):
-                if not self.anthropic_client:
-                    raise ValueError("Anthropic API key not configured")
-                response = await asyncio.to_thread(
-                    self.anthropic_client.messages.create,
-                    model=model,
-                    system=system_prompt,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-                res_content = response.content[0].text
-                latency = int((time.time() - start_time) * 1000)
-                from app.services.provider_health_service import log_provider_health_event
-                log_provider_health_event(provider, "llm", "success", latency_ms=latency)
-                return res_content
-
-            raise ValueError(f"Unsupported model: {model}")
+            # Force GPT-4o mini
+            model_to_use = "gpt-4o-mini"
+            if not self.openai_client:
+                raise ValueError("OpenAI API key not configured")
+            
+            response = await self.openai_client.chat.completions.create(
+                model=model_to_use,
+                messages=[{"role": "system", "content": system_prompt}] + messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            res_content = response.choices[0].message.content or ""
+            latency = int((time.time() - start_time) * 1000)
+            from app.services.provider_health_service import log_provider_health_event
+            log_provider_health_event(provider, "llm", "success", latency_ms=latency)
+            return res_content
         except Exception as e:
             latency = int((time.time() - start_time) * 1000)
             from app.services.provider_health_service import log_provider_health_event
@@ -84,22 +63,15 @@ class LLMService:
         if not self.openai_client:
             raise ValueError("OpenAI API key not configured")
 
-        if model.startswith("gpt"):
-            model = "gpt-4o-mini"  # Force GPT-4o mini for OpenAI calls
-
-        if not model.startswith("gpt"):
-            # Claude streaming not implemented — fall back to non-streaming
-            full = await self.generate(system_prompt, messages, model, temperature, max_tokens)
-            for chunk in full.split(" "):
-                yield chunk + " "
-            return
+        # Force GPT-4o mini
+        model_to_use = "gpt-4o-mini"
 
         import time
         start_time = time.time()
         first_token_logged = False
         try:
             stream = await self.openai_client.chat.completions.create(
-                model=model,
+                model=model_to_use,
                 messages=[{"role": "system", "content": system_prompt}] + messages,
                 temperature=temperature,
                 max_tokens=max_tokens,

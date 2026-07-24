@@ -13,73 +13,10 @@ logger = logging.getLogger(__name__)
 
 def execute_asterisk_cli(asterisk_cmd: str) -> Dict[str, Any]:
     """
-    Executes an Asterisk CLI command either locally or via SSH, based on configuration.
-    Returns a dict with: 'returncode', 'stdout', 'stderr', 'full_cmd', 'execution_method'.
+    Executes an Asterisk CLI command using the unified CLI executor.
     """
-    import subprocess
-    import shlex
-    import os
-    
-    use_ssh = settings.use_ssh_for_asterisk
-    
-    if use_ssh:
-        ssh_host = settings.asterisk_ssh_host
-        ssh_user = settings.asterisk_ssh_user
-        ssh_key = settings.asterisk_ssh_key_path or ""
-        
-        # Build SSH command
-        cmd_list = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]
-        if ssh_key:
-            cmd_list += ["-i", ssh_key]
-        cmd_list += [
-            f"{ssh_user}@{ssh_host}",
-            f"asterisk -rx {shlex.quote(asterisk_cmd)}"
-        ]
-        method = "ssh"
-    else:
-        # Local command execution
-        import platform
-        cli_base = settings.asterisk_cli_command or "asterisk"
-        
-        # Check if we are running on Windows and using WSL to avoid Win32 -> WSL argument/separator/wildcard parsing bugs
-        if platform.system() == "Windows" and cli_base.strip().startswith("wsl"):
-            wsl_parts = shlex.split(cli_base)
-            if wsl_parts and wsl_parts[-1] == "asterisk":
-                wsl_parts.pop()
-            cmd_list = wsl_parts + ["bash", "-c", f"asterisk -rx {shlex.quote(asterisk_cmd)}"]
-            method = "wsl_bash"
-        else:
-            cmd_list = shlex.split(cli_base)
-            cmd_list += ["-rx", asterisk_cmd]
-            method = "local"
-
-    logger.info(f"[Asterisk CLI] Executing command via {method}: {shlex.join(cmd_list)}")
-    try:
-        # Increased timeout to 60 seconds to accommodate slow WSL start/execution latency
-        res = subprocess.run(cmd_list, capture_output=True, text=True, timeout=60)
-        logger.info(f"[Asterisk CLI] Result - Code: {res.returncode}")
-        stdout_val = res.stdout or ""
-        stderr_val = res.stderr or ""
-        if stdout_val:
-            logger.info(f"[Asterisk CLI] Stdout: {stdout_val.strip()}")
-        if stderr_val:
-            logger.warning(f"[Asterisk CLI] Stderr: {stderr_val.strip()}")
-        return {
-            "returncode": res.returncode,
-            "stdout": stdout_val,
-            "stderr": stderr_val,
-            "full_cmd": shlex.join(cmd_list),
-            "execution_method": method
-        }
-    except Exception as e:
-        logger.error(f"[Asterisk CLI] Execution failed: {e}", exc_info=True)
-        return {
-            "returncode": -1,
-            "stdout": "",
-            "stderr": str(e),
-            "full_cmd": shlex.join(cmd_list),
-            "execution_method": method
-        }
+    from app.services.asterisk_cli import execute_asterisk_cli_cmd
+    return execute_asterisk_cli_cmd(asterisk_cmd)
 
 
 def is_audiosocket_listening() -> bool:
@@ -498,11 +435,17 @@ async def test_call(
                     )
                     
                 # 2. Preemptive validation: PJSIP endpoint existence
-                endpoint_check = execute_asterisk_cli(f"pjsip show endpoint {endpoint_name}")
-                if endpoint_check["returncode"] != 0 or "Unable to find" in endpoint_check["stdout"] or "not found" in endpoint_check["stdout"].lower():
+                from app.services.asterisk_cli import verify_endpoint_status
+                validation = verify_endpoint_status(endpoint_name)
+                if validation["status"] == "missing":
                     raise HTTPException(
                         status_code=400,
-                        detail=f"SIP Trunk Endpoint '{endpoint_name}' does not exist in Asterisk. Please check your pjsip.conf configuration."
+                        detail=validation["message"]
+                    )
+                elif validation["status"] in ("unavailable", "cli_error"):
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Asterisk connection issue: {validation['message']}"
                     )
                     
                 # 3. Execute local originate command directly (no SSH fallback, return errors)

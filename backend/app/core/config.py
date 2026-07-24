@@ -14,7 +14,6 @@ class Settings(BaseSettings):
     
     # External APIs
     openai_api_key: Optional[str] = None
-    anthropic_api_key: Optional[str] = None
     deepgram_api_key: Optional[str] = None
     elevenlabs_api_key: Optional[str] = None
     sarvam_api_key: Optional[str] = None
@@ -45,25 +44,6 @@ class Settings(BaseSettings):
     asterisk_audiosocket_host: str = "127.0.0.1"
     asterisk_audiosocket_port: int = 9092
     asterisk_webhook_secret: Optional[str] = None
-    asterisk_provider_name: str = "airtel_or_jio"
-    asterisk_default_sample_rate: int = 8000
-    asterisk_vps_url: Optional[str] = None          # e.g. http://72.60.202.148:8010
-    asterisk_ssh_host: str = "72.60.202.148"
-    asterisk_ssh_user: str = "root"
-    asterisk_ssh_key_path: Optional[str] = None     # path to SSH private key if needed
-    asterisk_mode: str = "local"
-    use_ssh_for_asterisk: bool = False
-    asterisk_cli_command: str = "asterisk"
-    asterisk_test_beep_on_connect: bool = False  # Send 440Hz beep on connect to verify AudioSocket framing
-    
-    # Redis
-    redis_url: str = "redis://localhost:6379/0"
-    
-    # Celery
-    celery_broker_url: str = "redis://localhost:6379/1"
-    celery_result_backend: str = "redis://localhost:6379/2"
-    
-    # API
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     api_workers: int = 4
@@ -107,6 +87,21 @@ class Settings(BaseSettings):
     call_reservation_ttl_seconds: int = 7200
     call_usage_monitor_interval_seconds: int = 15
     block_overdue_workspaces: bool = True
+    
+    # Redis configuration
+    redis_url: str = "redis://localhost:6379"
+    redis_required: bool = False
+    
+    # Asterisk & SSH configuration
+    asterisk_mode: str = "vps"
+    asterisk_vps_url: Optional[str] = None
+    asterisk_ssh_host: Optional[str] = None
+    asterisk_ssh_user: Optional[str] = None
+    asterisk_ssh_key_path: Optional[str] = None
+    asterisk_cli_command: str = "asterisk"
+    use_ssh_for_asterisk: bool = False
+    asterisk_provider_name: str = "asterisk"
+    asterisk_test_beep_on_connect: bool = False
     
     model_config = {
         "env_file": ".env",

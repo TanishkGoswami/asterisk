@@ -44,9 +44,8 @@ class LocalAgentService:
         self.llm = (
             LLMService(
                 openai_key=settings.openai_api_key or "",
-                anthropic_key=settings.anthropic_api_key or "",
             )
-            if settings.openai_api_key or settings.anthropic_api_key
+            if settings.openai_api_key
             else None
         )
 
@@ -59,26 +58,16 @@ class LocalAgentService:
 
     @property
     def default_model(self) -> str:
-        if settings.openai_api_key:
-            return "gpt-4o-mini"
-        if settings.anthropic_api_key:
-            return "claude-3-5-sonnet-latest"
         return "gpt-4o-mini"
 
     @property
     def default_provider(self) -> str:
-        if settings.openai_api_key:
-            return "openai"
-        if settings.anthropic_api_key:
-            return "anthropic"
         return "openai"
 
     def get_capabilities(self) -> dict[str, Any]:
         available_models: list[str] = []
         if settings.openai_api_key:
             available_models.extend(["gpt-4o-mini"])
-        if settings.anthropic_api_key:
-            available_models.extend(["claude-3-5-sonnet-latest"])
 
         voices = list(DEEPGRAM_VOICES)
         if settings.sarvam_api_key:
@@ -129,7 +118,7 @@ class LocalAgentService:
         language: str = "en-US",
     ) -> str:
         if not self.llm:
-            raise RuntimeError("No LLM provider is configured. Add OPENAI_API_KEY or ANTHROPIC_API_KEY in backend/.env.")
+            raise RuntimeError("No LLM provider is configured. Add OPENAI_API_KEY in backend/.env.")
 
         knowledge_base = (knowledge_base_text if knowledge_base_text is not None else self.read_knowledge_base()).strip()
         prompt = (system_prompt or DEFAULT_PROMPT).strip()

@@ -41,7 +41,6 @@ def _get_llm() -> Optional[LLMService]:
     if _llm is None and settings.openai_api_key:
         _llm = LLMService(
             openai_key=settings.openai_api_key,
-            anthropic_key=settings.anthropic_api_key or "",
         )
     return _llm
 
